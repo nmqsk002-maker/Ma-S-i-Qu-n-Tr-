@@ -140,10 +140,11 @@ def get_level_title(level):
 # ==========================================
 # 5. GIAO DIỆN MENU SẢNH CHÍNH (MAIN LOBBY)
 # ==========================================
+# --- ĐOẠN CODE SAU KHI SỬA Ở PHẦN 2 ---
 def get_main_menu_markup():
-    """Thiết kế hệ thống nút bấm Inline sang xịn cho Sảnh Chờ"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     
+    # Các nút cũ của Phần 2
     btn_find_game = types.InlineKeyboardButton("🎮 TÌM TRẬN NGAY", callback_data="lobby_find")
     btn_create_game = types.InlineKeyboardButton("➕ TẠO PHÒNG CHƠI", callback_data="lobby_create")
     btn_profile = types.InlineKeyboardButton("👤 HỒ SƠ CỦA TÔI", callback_data="lobby_profile")
@@ -152,10 +153,21 @@ def get_main_menu_markup():
     btn_top = types.InlineKeyboardButton("🏆 BẢNG XẾP HẠNG", callback_data="lobby_top")
     btn_help = types.InlineKeyboardButton("📜 HƯỚNG DẪN LUẬT CHƠI", callback_data="lobby_help")
     
+    # 📥 ĐỒNG BỘ: Dán thêm các nút mới của Phần 37, 43, 44 vào đây
+    btn_wheel = types.InlineKeyboardButton("🎯 VÒNG QUAY MAY MẮN", callback_data="lobby_wheel_hub")
+    btn_att = types.InlineKeyboardButton("📆 ĐIỂM DANH NHẬN QUÀ", callback_data="lobby_attendance_hub")
+    btn_rewards = types.InlineKeyboardButton("🏅 QUÀ THĂNG CẤP", callback_data="lobby_level_rewards")
+    
+    # Xếp các nút vào menu
     markup.add(btn_find_game)
     markup.add(btn_create_game, btn_profile)
     markup.add(btn_shop, btn_bank)
     markup.add(btn_top, btn_help)
+    
+    # Thêm các nút mới vào hàng
+    markup.add(btn_wheel, btn_att)
+    markup.add(btn_rewards)
+    
     return markup
 
 @bot.message_handler(commands=['start', 'menu'])
