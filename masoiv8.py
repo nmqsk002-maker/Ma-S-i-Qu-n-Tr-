@@ -7,11 +7,11 @@ import threading
 # ==========================================
 # 1. CẤU HÌNH CƠ BẢN & ĐỊNH DANH QUẢN TRỊ
 # ==========================================
-TOKEN = "YOUR_BOT_TOKEN_HERE"  # Thay Token Bot của bạn vào đây
+TOKEN = "8134069277:AAEr4g3ZBoB0-2R3NUZMYvRHknXqKwEs0wE"  # Thay Token Bot của bạn vào đây
 bot = telebot.TeleBot(TOKEN)
 
 # Hệ thống ID Admin tối cao (Thay bằng ID Telegram thực tế của bạn)
-ADMIN_WHITELIST = [123456789] 
+ADMIN_WHITELIST = [8094973465] 
 
 # ==========================================
 # 2. CƠ SỞ DỮ LIỆU TẠM THỜI (IN-MEMORY DATABASE)
