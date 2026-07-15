@@ -1044,7 +1044,7 @@ def get_role_pool_for_players(player_count):
             
         # Bước 2: Tiến hành xáo trộn bài ngẫu nhiên bằng thuật toán Fisher-Yates
         assigned_roles = get_role_pool_for_players(player_count)
-        random.shuffle(assigned_roles)
+        distribute_roles_with_priority_tickets(room_id)
         
         # Gán vai trò cụ thể cho từng ID người chơi
         for index, pid in enumerate(room_data["players"]):
@@ -3845,3 +3845,1588 @@ def distribute_roles_with_priority_tickets(room_id):
             "status": "Alive",
             "target_history": []
         }
+
+# ==========================================
+# 93. ĐỊNH NGHĨA KHO NHIỆM VỤ HÀNG NGÀY SYSTEM
+# ==========================================
+DAILY_QUESTS_POOL = {
+    "q1": {"desc": "🎮 Tham gia đủ 2 trận đấu Ma Sói bất kỳ", "target": 2, "gold": 500, "exp": 30},
+    "q2": {"desc": "🏆 Giành chiến thắng 1 trận đấu", "target": 1, "gold": 800, "exp": 50},
+    "q3": {"desc": "🏦 Thực hiện 1 giao dịch tại Ngân hàng", "target": 1, "gold": 300, "exp": 20},
+    "q4": {"desc": "🎁 Tặng tiền Vàng P2P cho bằng hữu", "target": 1, "gold": 400, "exp": 25}
+}
+
+# ==========================================
+# 94. HÀM KHỞI TẠO VÀ LÀM MỚI NHIỆM VỤ CHO USER
+# ==========================================
+def refresh_daily_quests_if_new_day(user_id):
+    """
+    Tự động kiểm tra ngày mới. Nếu sang ngày mới, ngẫu nhiên rút 3 nhiệm vụ 
+    từ Pool và reset tiến trình (progress) về 0 cho người chơi.
+    """
+    user_data = user_db[user_id]
+    current_date = time.strftime("%Y-%m-%d") # Lấy ngày hiện tại hệ thống
+    
+    # Nếu chưa từng có dữ liệu nhiệm vụ hoặc đã bước sang ngày mới
+    if "quests_date" not in user_data or user_data["quests_date"] != current_date:
+        user_data["quests_date"] = current_date
+        user_data["daily_quests"] = {}
+        
+        # Chọn ngẫu nhiên 3 mã nhiệm vụ không trùng nhau
+        selected_q_ids = random.sample(list(DAILY_QUESTS_POOL.keys()), 3)
+        
+        for q_id in selected_q_ids:
+            user_data["daily_quests"][q_id] = {
+                "progress": 0,       # Tiến trình hiện tại
+                "claimed": False     # Trạng thái đã nhận thưởng hay chưa
+            }
+
+def update_quest_progress(user_id, quest_id_action):
+    """Hàm bổ trợ tăng tiến trình nhiệm vụ khi user thực hiện hành động tương ứng trong game"""
+    if user_id not in user_db: return
+    user_data = user_db[user_id]
+    
+    # Đảm bảo dữ liệu nhiệm vụ luôn mới nhất trong ngày
+    refresh_daily_quests_if_new_day(user_id)
+    
+    if quest_id_action in user_data["daily_quests"]:
+        quest_state = user_data["daily_quests"][quest_id_action]
+        quest_config = DAILY_QUESTS_POOL[quest_id_action]
+        
+        # Nếu chưa đạt mốc tối đa thì tăng tiến trình lên 1
+        if quest_state["progress"] < quest_config["target"]:
+            quest_state["progress"] += 1
+
+# ==========================================
+# 95. GIAO DIỆN BẢNG THÔNG TIN NHIỆM VỤ TRỰC QUAN
+# ==========================================
+def get_quests_menu_markup(user_id):
+    """Tạo các nút bấm Inline để nhận thưởng cho từng nhiệm vụ hoàn thành"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    user_data = user_db[user_id]
+    
+    for q_id, state in user_data["daily_quests"].items():
+        config = DAILY_QUESTS_POOL[q_id]
+        
+        # Thiết lập nhãn trạng thái cho nút bấm
+        if state["claimed"]:
+            btn_text = f"✅ ĐÃ NHẬN — {config['desc']}"
+            cb_data = "quest_already_claimed"
+        elif state["progress"] >= config["target"]:
+            btn_text = f"🎁 NHẬN THƯỞNG — {config['desc']}"
+            cb_data = f"quest_claim_{q_id}"
+        else:
+            btn_text = f"⏳ ({state['progress']}/{config['target']}) — {config['desc']}"
+            cb_data = "quest_not_done"
+            
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=cb_data))
+        
+    markup.add(types.InlineKeyboardButton("⬅️ QUAY LẠI SẢNH", callback_data="lobby_back_main"))
+    return markup
+
+def show_daily_quests_hub(user_id, chat_id, message_id=None):
+    """Hiển thị trung tâm nhiệm vụ hàng ngày của game thủ"""
+    refresh_daily_quests_if_new_day(user_id)
+    
+    quest_text = (
+        f"📜 **TRUNG TÂM NHIỆM VỤ HÀNG NGÀY LÀNG SÓI** 📜\n"
+        f"-----------------------------------------\n"
+        f"📅 Hôm nay: `{time.strftime('%d/%m/%Y')}`\n"
+        f"👤 Thuyền trưởng: **{user_db[user_id]['name']}**\n\n"
+        f"🔥 Hãy hoàn thành các mục tiêu sinh tồn dưới đây để tích lũy tài sản miễn phí hằng ngày. "
+        f"Nhiệm vụ và tiến trình sẽ tự động làm mới hoàn toàn vào lúc `00:00` mỗi đêm.\n\n"
+        f"👇 **DANH SÁCH NHIỆM VỤ HÔM NAY:**"
+    )
+    
+    if message_id:
+        bot.edit_message_text(quest_text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_quests_menu_markup(user_id))
+    else:
+        bot.send_message(chat_id, quest_text, parse_mode="Markdown", reply_markup=get_quests_menu_markup(user_id))
+
+# ==========================================
+# 96. TIẾP TỤC BỔ SUNG CÁC NHÁNH XỬ LÝ VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data == "quest_not_done":
+        bot.answer_callback_query(call.id, text="❌ Nhiệm vụ chưa hoàn thành, dũng sĩ hãy tiếp tục nỗ lực!", show_alert=True)
+        
+    elif data == "quest_already_claimed":
+        bot.answer_callback_query(call.id, text="⚠️ Bạn đã thu hoạch phần thưởng này trong ngày hôm nay rồi.", show_alert=False)
+
+    elif data.startswith("quest_claim_"):
+        q_id = data.replace("quest_claim_", "")
+        user_data = user_db[user_id]
+        state = user_data["daily_quests"][q_id]
+        config = DAILY_QUESTS_POOL[q_id]
+        
+        # Thực thi khóa phần thưởng, cộng tiền và EXP trực tiếp
+        state["claimed"] = True
+        user_data["gold"] += config["gold"]
+        
+        # Kích hoạt hàm kiểm tra thăng cấp đã viết ở Phần 22
+        level_up = add_exp_and_check_level_up(user_id, config["exp"])
+        lvl_up_alert = "\n🎉 **CHÚC MỪNG LEVEL UP!** Bạn đã tăng cấp danh hiệu mới." if level_up else ""
+        
+        bot.answer_callback_query(
+            call.id, 
+            text=f"🎁 Thu hoạch thành công: +{config['gold']:,} Vàng & +{config['exp']} EXP!{lvl_up_alert}", 
+            show_alert=True
+        )
+        
+        # Làm mới lại màn hình nhiệm vụ để cập nhật trạng thái "ĐÃ NHẬN"
+        show_daily_quests_hub(user_id, chat_id, message_id)
+
+# Bộ nhớ tạm lưu trạng thái Thợ Săn bắn đêm của từng phòng chơi: { room_id: hunter_user_id }
+night_hunter_trigger_cache = {}
+
+# ==========================================
+# 97. LOGIC KÍCH HOẠT LỆNH THỢ SĂN ĐÊM NGẦM
+# ==========================================
+def check_and_trigger_night_hunter_skill(room_id, wolf_victim_id):
+    """
+    Hàm kiểm tra va chạm sinh mệnh ban đêm.
+    Nếu nạn nhân bị Sói cắn chết hoàn toàn là Thợ Săn, kích hoạt quyền năng bắn đêm.
+    Ghi chú: Lồng hàm này vào Bước 4 của hàm `process_end_of_night` (Phần 15) trước khi công bố sáng.
+    """
+    room_data = game_rooms[room_id]
+    
+    # Xác thực nạn nhân chết đêm nay là Thợ Săn
+    if room_data["roles"][wolf_victim_id]["role"] == "Thợ Săn":
+        night_hunter_trigger_cache[room_id] = wolf_victim_id
+        room_data["status"] = "Night_Hunter_Active"
+        
+        hunter_night_text = (
+            "🏹 **QUYỀN NĂNG THỢ SĂN ĐÊM BÙNG NỔ** 🏹\n"
+            "-----------------------------------------\n"
+            "🩸 Bạn vừa bị nanh vuốt Ma Sói cắn xé xuyên qua màn đêm! Sức lực cuối cùng đang cạn kiệt...\n\n"
+            "👉 Hãy giương cung/súng xả ngay một phát đạn chí mạng về phía kẻ tình nghi nhất ban đêm. "
+            "Mục tiêu bị bạn nhắm bắn sẽ lật bài chết cùng bạn vào sáng mai!\n"
+            "⏳ **Thời gian hành động khẩn cấp:** `15 giây` để bấm nút phán quyết."
+        )
+        
+        # Tạo danh sách nút mục tiêu cho Thợ Săn bắn đêm (Sử dụng hàm tạo nút ở Phần 12 với tag 'nhunter')
+        markup_nhunter = get_night_target_markup(room_id, wolf_victim_id, "nhunter")
+        btn_skip = types.InlineKeyboardButton("⚪ Chết Lặng (Không bắn ai)", callback_data=f"skill_nhunter_{room_id}_0")
+        markup_nhunter.add(btn_skip)
+        
+        try:
+            bot.send_message(wolf_victim_id, hunter_night_text, parse_mode="Markdown", reply_markup=markup_nhunter)
+        except Exception:
+            pass
+            
+        # Chặn đứng luồng chạy chính trong 15 giây để đợi Thợ Săn xả đạn
+        time.sleep(15)
+        return True
+        
+    return False
+
+# ==========================================
+# 98. BỔ SUNG NHÁNH XỬ LÝ SỰ KIỆN VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data.startswith("skill_nhunter_"):
+        # Phân tách chuỗi: skill_nhunter_[room_id]_[target_id]
+        parts = data.split("_")
+        room_id = parts[2]
+        target_id = int(parts[3])
+        
+        if room_id not in game_rooms or game_rooms[room_id]["status"] != "Night_Hunter_Active":
+            bot.answer_callback_query(call.id, text="❌ Đã hết thời gian bóp cò súng đêm!", show_alert=True)
+            return
+            
+        room_data = game_rooms[room_id]
+        
+        # Trường hợp 1: Thợ Săn chọn bỏ qua không bắn ai
+        if target_id == 0:
+            bot.edit_message_text("⚪ Bạn quyết định ôm hận ra đi trong lặng im, giữ lại mạng sống cho dân làng.", chat_id, message_id)
+            bot.answer_callback_query(call.id, text="Đã buông bỏ phát bắn.")
+            room_data["status"] = "Night" # Trả trạng thái về đêm để chạy tiếp tổng kết sáng
+            return
+
+        # Trường hợp 2: Bắn chết 1 mục tiêu cụ thể ban đêm
+        target_name = user_db[target_id]["name"]
+        target_role = room_data["roles"][target_id]["role"]
+        
+        # Thực thi khai tử mục tiêu dính đạn ngầm
+        if target_id in room_data["alive"]:
+            room_data["alive"].remove(target_id)
+            room_data["roles"][target_id]["status"] = "Dead"
+            
+        # Ghi nhận sự kiện đặc biệt này vào bộ đếm khai tử sáng (Đồng bộ trực tiếp với Phần 15)
+        room_data["history_log"].append(f"🏹 Thợ Săn Đêm bóp cò ghim đạn chết {target_name} ({target_role}).")
+        
+        # Phát thông báo mật phản hồi cho Thợ Săn
+        bot.edit_message_text(f"💥 ĐOÀNG! Phát đạn đêm của bạn đã ghim thẳng vào ngực **{target_name}**. Máu nhuộm màn đêm!", chat_id, message_id, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, text="Xả đạn thành công!", show_alert=True)
+        
+        # Trả luồng game về trạng thái đêm để máy chủ tiếp tục chạy hàm công bố kết quả sáng
+        room_data["status"] = "Night"
+        
+        # Đồng bộ hóa in thêm kết quả dính đạn của Thợ săn lên sảnh chat tổng ban ngày
+        # (Bộ não tổng kết Phần 15 sẽ tự động quét danh sách chết để in tên tuổi kẻ dính đạn này ra nhóm)
+
+# ==========================================
+# 99. ĐỊNH NGHĨA CÁC MỐC THƯỞNG CẤP ĐỘ TOÀN SERVER
+# ==========================================
+LEVEL_REWARDS_POOL = {
+    5:  {"gold": 2000,  "title": "🏹 Dân Làng Tinh Anh"},
+    10: {"gold": 5000,  "title": "⚡ Cao Thủ Làng Sói"},
+    15: {"gold": 10000, "title": "⚔️ Thợ Săn Lão Luyện"},
+    25: {"gold": 25000, "title": "🔮 Đại Pháp Sư"},
+    50: {"gold": 100000,"title": "👑 Huyền Thoại Làng Sói"}
+}
+
+# ==========================================
+# 100. GIAO DIỆN BẢNG PHẦN THƯỞNG CẤP ĐỘ
+# ==========================================
+def get_level_rewards_markup(user_id):
+    """Tạo danh sách nút bấm hiển thị trạng thái các mốc thưởng để nhận Vàng"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    user_data = user_db[user_id]
+    
+    # Khởi tạo danh sách mốc đã nhận nếu tài khoản mới tinh chưa từng bấm nhận quà
+    if "claimed_lv_rewards" not in user_data:
+        user_data["claimed_lv_rewards"] = set()
+        
+    current_level = user_data["level"]
+    
+    for lv_milestone, config in sorted(LEVEL_REWARDS_POOL.items()):
+        # Trường hợp 1: Đã nhận quà mốc này rồi
+        if lv_milestone in user_data["claimed_lv_rewards"]:
+            btn_text = f"✅ ĐÃ NHẬN — Quà Cấp {lv_milestone} (+{config['gold']:,} Vàng)"
+            cb_data = "lv_reward_already_claimed"
+            
+        # Trường hợp 2: Đủ cấp độ và sẵn sàng nhận thưởng
+        elif current_level >= lv_milestone:
+            btn_text = f"🎁 BẤM NHẬN — Quà Cấp {lv_milestone} (+{config['gold']:,} Vàng)"
+            cb_data = f"lv_reward_claim_{lv_milestone}"
+            
+        # Trường hợp 3: Chưa đủ cấp độ yêu cầu
+        else:
+            btn_text = f"🔒 KHÓA (Yêu cầu Cấp {lv_milestone}) — {config['title']}"
+            cb_data = f"lv_reward_locked_{lv_milestone}"
+            
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=cb_data))
+        
+    btn_back = types.InlineKeyboardButton("⬅️ QUAY LẠI SẢNH", callback_data="lobby_back_main")
+    markup.add(btn_back)
+    return markup
+
+def show_level_rewards_hub(user_id, chat_id, message_id=None):
+    """Hiển thị trung tâm nhận quà thăng cấp danh dự"""
+    user_data = user_db[user_id]
+    
+    hub_text = (
+        f"🏅 **TRUNG TÂM PHẦN THƯỞNG CẤP ĐỘ SÓI V8** 🏅\n"
+        f"-----------------------------------------\n"
+        f"👤 Tài khoản: **{user_data['name']}**\n"
+        f"🎖️ Cấp độ hiện tại: `Cấp {user_data['level']}`\n"
+        f"💰 Số dư ví: `{user_data['gold']:,} Vàng`\n\n"
+        f"✨ **HÀNH TRÌNH DANH VỌNG:**\n"
+        f"👉 Hãy tích cực tham chiến các trận đấu Ma Sói để tích lũy điểm kinh nghiệm (EXP). "
+        f"Mỗi khi chạm đến cột mốc vàng, bạn sẽ được khai thông phong ấn để nhận hàng ngàn Vàng miễn phí từ kho báu của làng!\n\n"
+        f"👇 **TRẠNG THÁI CÁC MỐC THƯỞNG:**"
+    )
+    
+    if message_id:
+        bot.edit_message_text(hub_text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_level_rewards_markup(user_id))
+    else:
+        bot.send_message(chat_id, hub_text, parse_mode="Markdown", reply_markup=get_level_rewards_markup(user_id))
+
+# ==========================================
+# 101. TIẾP TỤC BỔ SUNG CÁC NHÁNH XỬ LÝ VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data == "lv_reward_already_claimed":
+        bot.answer_callback_query(call.id, text="⚠️ Mốc phần thưởng danh dự này bạn đã thu hoạch từ trước.", show_alert=False)
+        
+    elif data.startswith("lv_reward_locked_"):
+        lv_needed = data.replace("lv_reward_locked_", "")
+        bot.answer_callback_query(call.id, text=f"🔒 Bạn cần đạt tối thiểu Cấp {lv_needed} để phá phong ấn nhận quà mốc này!", show_alert=True)
+
+    elif data.startswith("lv_reward_claim_"):
+        lv_milestone = int(data.replace("lv_reward_claim_", ""))
+        user_data = user_db[user_id]
+        config = LEVEL_REWARDS_POOL[lv_milestone]
+        
+        # Đóng dấu xác nhận đã nhận quà vào mảng cấu trúc danh sách
+        if "claimed_lv_rewards" not in user_data:
+            user_data["claimed_lv_rewards"] = set()
+            
+        user_data["claimed_lv_rewards"].add(lv_milestone)
+        
+        # Cộng tiền thưởng Vàng trực tiếp vào ví
+        user_data["gold"] += config["gold"]
+        
+        bot.answer_callback_query(
+            call.id, 
+            text=f"🎉 Nhận quà thành công! Kho báu cấp {lv_milestone} gửi tặng dũng sĩ: +{config['gold']:,} Vàng vào tài khoản.", 
+            show_alert=True
+        )
+        
+        # Làm mới lại giao diện màn hình để cập nhật mốc vừa nhận thành dấu check xanh
+        show_level_rewards_hub(user_id, chat_id, message_id)
+
+# Bộ nhớ tạm quản lý trạng thái kích hoạt Huyết Ấn Bóng Đêm của từng phòng chơi: { room_id: True/False }
+shadow_ballot_active_cache = {}
+
+# ==========================================
+# 102. ĐỒNG BỘ THÊM NÚT BẤM KÍCH HOẠT SHADOW BALLOT (Phần 13)
+# ==========================================
+# Bạn hãy mở Phần 13 (Hàm get_wolf_vote_markup) ra và chèn thêm đoạn code này 
+# để chỉ Sói Alpha hoặc Sói Nguyền nhìn thấy nút kích hoạt chiêu thức ẩn danh:
+
+def inject_shadow_button_for_alpha(room_id, markup_wolf, user_role):
+    """Bổ sung nút kích hoạt Huyết Ấn Bóng Đêm vào menu bỏ phiếu đêm của Sói cấp cao"""
+    # Nếu phòng chơi chưa từng dùng chiêu và người gọi lệnh là Sói Alpha hoặc Sói Nguyền
+    if not shadow_ballot_active_cache.get(room_id, False) and user_role in ["Sói Alpha", "Sói Nguyền"]:
+        btn_shadow = types.InlineKeyboardButton("🔮 KÍCH HOẠT: Huyết Ấn Bóng Đêm", callback_data=f"wolf_shadow_activate_{room_id}")
+        markup_wolf.add(btn_shadow)
+    return markup_wolf
+
+# ==========================================
+# 103. BỔ SUNG NHÁNH XỬ LÝ SỰ KIỆN VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data.startswith("wolf_shadow_activate_"):
+        room_id = data.replace("wolf_shadow_activate_", "")
+        
+        if room_id not in game_rooms or game_rooms[room_id]["status"] != "Night":
+            bot.answer_callback_query(call.id, text="❌ Đã hết thời gian hành động ban đêm!", show_alert=True)
+            return
+            
+        # Kích hoạt trạng thái Ẩn Danh Tuyệt Đối cho phòng chơi
+        shadow_ballot_active_cache[room_id] = True
+        room_data = game_rooms[room_id]
+        
+        bot.answer_callback_query(call.id, text="🔮 Đã giải phóng Huyết Ấn Bóng Đêm thành công!", show_alert=True)
+        bot.edit_message_text("🔮 Bạn đã kích hoạt **Huyết Ấn Bóng Đêm**. Lệnh bỏ phiếu cắn người của bầy Sói đêm nay sẽ được ẩn giấu tuyệt đối, không một ai biết được tiến trình!", chat_id, message_id)
+        
+        # Gửi mật báo khẩn cho toàn bộ bầy Sói còn sống biết chiêu thức đang được thi triển
+        for pid in room_data["alive"]:
+            if "Sói" in room_data["roles"][pid]["role"] and pid != user_id:
+                try:
+                    bot.send_message(pid, "🔮 **MẬT BÁO BÓNG ĐÊM:** Đồng bọn cấp cao trong bầy vừa kích hoạt *Huyết Ấn Bóng Đêm*. Tiến trình bỏ phiếu cắn người từ giây phút này sẽ bị khóa hiển thị để bảo mật tối cao!")
+                except Exception: pass
+
+# ==========================================
+# 104. ĐỒNG BỘ HOÀN TOÀN CƠ CHẾ VÀO LOGIC CẮN NGƯỜI (Phần 13)
+# ==========================================
+# Bạn tìm đến hàm Callback xử lý lệnh cắn người `wolf_bite_` ở Phần 13, 
+# hãy tìm đoạn "Thông báo ẩn danh cho các thành viên Sói khác..." và thế bằng logic lọc bóng đêm này:
+
+        # Đoạn code đồng bộ ẩn danh tối ưu mới:
+        # Nếu phòng chơi KHÔNG kích hoạt Huyết Ấn Bóng Đêm thì mới thông báo cho đồng bọn
+        if not shadow_ballot_active_cache.get(room_id, False):
+            for pid in room_data["alive"]:
+                if "Sói" in room_data["roles"][pid]["role"] and pid != user_id:
+                    try:
+                        bot.send_message(pid, f"🐾 Một thành viên trong bầy vừa bỏ phiếu cắn **{target_name}**.")
+                    except Exception: pass
+        else:
+            # Nếu Huyết ấn đang chạy, im lặng hoàn toàn, không bắn tin nhắn thông báo tiến trình cho bất kỳ ai!
+            pass
+
+# ==========================================
+# 105. DỌN DẸP CACHE SAU KHI ĐÊM KHÉP LẠI (Phần 15)
+# ==========================================
+# Ghi chú: Bạn hãy chèn dòng giải phóng bộ nhớ RAM này vào Bước 5 của hàm `process_end_of_night` ở Phần 15:
+# if room_id in shadow_ballot_active_cache: del shadow_ballot_active_cache[room_id]
+# Bộ nhớ tạm lưu trữ ID của người sống nhận thông điệp tâm linh đêm nay: { room_id: user_id_người_sống }
+spirit_receiver_cache = {}
+
+# ==========================================
+# 106. HÀM KÍCH HOẠT ĐƯỜNG TRUYỀN LINH HỒN BAN ĐÊM
+# ==========================================
+def trigger_spirit_medium_link(room_id):
+    """
+    Hàm lõi quét phòng chơi khi đêm xuống:
+    - Tìm xem phòng đã có người chết (linh hồn) chưa.
+    - Chọn ngẫu nhiên 1 người chơi thuộc phe Dân Làng còn sống để làm cột thu lôi nhận tin nhắn.
+    - Mở cổng đăng ký nhận thông điệp trăng trối.
+    """
+    room_data = game_rooms[room_id]
+    
+    # 1. Tính toán danh sách linh hồn (người thuộc phòng nhưng đã chết)
+    dead_souls = [pid for pid in room_data["players"] if pid not in room_data["alive"]]
+    
+    # 2. Tính toán danh sách người sống sót thuộc phe Dân Làng để làm cổng nhận
+    living_villagers = [pid for pid in room_data["alive"] if room_data["roles"][pid]["team"] == "Dân Làng"]
+    
+    if not dead_souls or not living_villagers:
+        return # Nếu chưa có ai chết hoặc không còn dân làng nào sống, hủy luồng tâm linh
+        
+    # Chọn ngẫu nhiên 1 dũng sĩ may mắn nhận thông điệp đêm nay
+    receiver_id = random.choice(living_villagers)
+    spirit_receiver_cache[room_id] = receiver_id
+    
+    # 3. Phát lệnh gọi cho toàn bộ thế giới linh hồn (những người đã chết)
+    spirit_instruction = (
+        f"🌌 **CỔNG TÂM LINH ĐÊM NAY ĐÃ MỞ** 🌌\n"
+        f"-----------------------------------------\n"
+        f"🔮 Hỡi các linh hồn đã khuất của phòng `{room_id}`, oán khí ban đêm đang ngút trời. "
+        f"Thần linh cho phép các bạn gửi **1 thông điệp mật** gửi gắm manh mối cho người sống.\n\n"
+        f"👉 Hãy sử dụng lệnh cú pháp: `/tam_linh [Nội_dung_nhắn_nhủ]` để gửi ngay cho Bot.\n"
+        f"🤫 *Quy tắc:* Tin nhắn sẽ được chuyển tiếp nặc danh đến 1 người sống ngẫu nhiên trong làng để giúp đỡ họ suy luận!"
+    )
+    
+    for soul_id in dead_souls:
+        try: bot.send_message(soul_id, spirit_instruction, parse_mode="Markdown")
+        except Exception: pass
+
+# Ghi chú tích hợp: Bạn hãy gọi hàm `trigger_spirit_medium_link(room_id)` này ở cuối hàm 
+# `start_night_phase` ở Phần 11 để kích hoạt cổng truyền tín hiệu ngay khi đêm xuống.
+
+# ==========================================
+# 107. LỆNH GỬI THÔNG ĐIỆP CỦA LINH HỒN ĐÃ CHẾT
+# ==========================================
+@bot.message_handler(commands=['tam_linh'])
+def cmd_send_spirit_message(message):
+    """Xử lý lệnh gửi tin nhắn tâm linh bí mật của linh hồn người chết"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    # Tìm phòng chơi hiện tại của linh hồn này
+    active_room_id = None
+    for rid, rdata in game_rooms.items():
+        if user_id in rdata["players"]:
+            active_room_id = rid
+            break
+            
+    if not active_room_id or game_rooms[active_room_id]["status"] != "Night":
+        bot.reply_to(message, "❌ Cổng tâm linh chỉ mở ra vào ban đêm khi trận đấu đang diễn ra!")
+        return
+        
+    room_data = game_rooms[active_room_id]
+    
+    # Điều kiện bảo mật: Người gửi phải chắc chắn đã CHẾT
+    if user_id in room_data["alive"]:
+        bot.reply_to(message, "❌ Bạn vẫn còn sống sờ sờ, không thể giả làm linh hồn để giao tiếp âm giới!")
+        return
+        
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "⚠️ Cú pháp chuẩn: `/tam_linh [Lời nhắn của linh hồn]`")
+        return
+        
+    spirit_text = args.strip()[:60] # Giới hạn 60 ký tự chống spam giao diện người nhận
+    receiver_id = spirit_receiver_cache.get(active_room_id)
+    
+    if receiver_id:
+        try:
+            # Gửi tin nhắn ẩn danh định dạng quẻ bói bí ẩn cho người sống nhận diện
+            bot.send_message(
+                receiver_id,
+                f"🔮 **TIẾNG THÌ THẦM TỪ CÕI ÂM** 🔮\n"
+                f"-----------------------------------------\n"
+                f"🌌 Gió lạnh thổi qua khe cửa... Một linh hồn vô danh đã khuất vừa gửi đến tai bạn một lời tiên tri trăn trối:\n\n"
+                f"🗣️ *\" {spirit_text} \"*\n"
+                f"-----------------------------------------\n"
+                f"💡 *Gợi ý:* Đây có thể là manh mối thật từ đồng đội, hoặc đòn hỏa mù từ Sói đã chết. Hãy cẩn trọng lập luận ban ngày!"
+            )
+            bot.reply_to(message, "✅ Thông điệp tâm linh của bạn đã được gió đêm thổi bay đến tai người sống thành công.")
+        except Exception:
+            bot.reply_to(message, "❌ Đường truyền tâm linh bị nghẽn mạch do lỗi kết nối đối tượng.")
+            
+    # Xóa cổng sau khi đã có linh hồn đầu tiên giật giải gửi tin nhắn thành công trong đêm
+    if active_room_id in spirit_receiver_cache:
+        del spirit_receiver_cache[active_room_id]
+
+# ==========================================
+# 108. ĐỊNH NGHĨA KHO THÀNH TỰU QUỐC TẾ SYSTEM
+# ==========================================
+ACHIEVEMENTS_POOL = {
+    "ac_first_win": {
+        "title": "🎖️ Khai Nòng Chiến Thắng",
+        "desc": "Đạt trận thắng đầu tiên trong hệ thống Ma Sói v8.",
+        "gold_reward": 1000,
+        "check_key": "win", "target_value": 1
+    },
+    "ac_veteran_win": {
+        "title": "🏆 Chiến Binh Lão Luyện",
+        "desc": "Tích lũy đạt mốc 10 trận thắng danh dự.",
+        "gold_reward": 5000,
+        "check_key": "win", "target_value": 10
+    },
+    "ac_millionaire": {
+        "title": "👑 Triệu Phú Làng Sói",
+        "desc": "Sở hữu tổng tài sản chạm dải 50,000 Vàng trong ví.",
+        "gold_reward": 2500,
+        "check_key": "gold", "target_value": 50000
+    },
+    "ac_level_10": {
+        "title": "🛡️ Trưởng Lão Tương Lai",
+        "desc": "Cày cuốc nâng cấp tài khoản chạm mốc Cấp 10 (Lv.10).",
+        "gold_reward": 4000,
+        "check_key": "level", "target_value": 10
+    }
+}
+
+# ==========================================
+# 109. THUẬT TOÁN QUÉT VÀ KIỂM TRA MỞ KHÓA TỰ ĐỘNG
+# ==========================================
+def scan_and_unlock_user_achievements(user_id, chat_id=None):
+    """
+    Hàm lõi đối chiếu chỉ số trong user_db với kho thành tựu:
+    - Kiểm tra xem người chơi đã mở khóa thành tựu này chưa.
+    - Nếu đạt điều kiện và chưa mở, bung lệnh mở khóa và cộng tiền thưởng lớn.
+    """
+    user_data = user_db[user_id]
+    
+    # Khởi tạo mảng lưu danh sách thành tựu đã mở nếu tài khoản mới tinh
+    if "unlocked_achievements" not in user_data:
+        user_data["unlocked_achievements"] = set()
+        
+    unlocked_any = False
+    
+    for ac_id, config in ACHIEVEMENTS_POOL.items():
+        # Điều kiện: Thành tựu chưa từng được mở khóa trước đây
+        if ac_id not in user_data["unlocked_achievements"]:
+            # Lấy giá trị thực tế của user để đối chiếu (win, gold, level...)
+            current_value = user_data.get(config["check_key"], 0)
+            
+            if current_value >= config["target_value"]:
+                # Thực thi mở khóa vĩnh viễn và phát thưởng Vàng khổng lồ
+                user_data["unlocked_achievements"].add(ac_id)
+                user_data["gold"] += config["gold_reward"]
+                unlocked_any = True
+                
+                # Bắn tin nhắn chúc mừng định dạng đẹp mắt đến hộp thư người chơi
+                announcement = (
+                    f"🏆 **THÀNH TỰU DANH GIÁ ĐÃ ĐƯỢC PHÁ GIẢI** 🏆\n"
+                    f"-----------------------------------------\n"
+                    f"🎉 Chúc mừng dũng sĩ **{user_data['name']}** vừa xuất sắc mở khóa thành công danh hiệu quý tộc:\n\n"
+                    f"🎖️ **{config['title']}**\n"
+                    f"ℹ️ *Mô tả:* _{config['desc']}_\n"
+                    f"-----------------------------------------\n"
+                    f"🎁 **Phần thưởng độc quyền:** `+{config['gold_reward']:,} Vàng` đã được chuyển vào tài khoản ví ngân hàng của bạn!"
+                )
+                
+                if chat_id:
+                    try: bot.send_message(chat_id, announcement, parse_mode="Markdown")
+                    except Exception: pass
+                else:
+                    try: bot.send_message(user_id, announcement, parse_mode="Markdown")
+                    except Exception: pass
+                    
+    return unlocked_any
+
+# ==========================================
+# 110. GIAO DIỆN XEM BẢNG TỔNG HỢP THÀNH TỰU (PROFILE LINK)
+# ==========================================
+def get_achievements_list_text(user_id):
+    """Biên soạn bảng danh sách hiển thị mốc thành tựu đã hoặc chưa mở của user"""
+    user_data = user_db[user_id]
+    unlocked_set = user_data.get("unlocked_achievements", set())
+    
+    text = "🏆 **BẢNG VÀNG THÀNH TỰU CÁ NHÂN** 🏆\n-----------------------------------------\n\n"
+    
+    for ac_id, config in ACHIEVEMENTS_POOL.items():
+        if ac_id in unlocked_set:
+            status_icon = "🟢 [ĐÃ PHÁ GIẢI]"
+        else:
+            status_icon = "🔒 [ĐANG KHÓA]"
+            
+        text += f"▪️ **{config['title']}** — {status_icon}\n   *Chi tiết:* {config['desc']}\n   *Quà:* `+{config['gold_reward']:,} Vàng`\n\n"
+        
+    text += f"📊 *Tiến độ hiện tại:* Bạn đã hoàn thành `{len(unlocked_set)}/{len(ACHIEVEMENTS_POOL)}` thành tựu toàn server."
+    return text
+
+
+# ==========================================
+# 111. LOGIC KHÓA TOÀN BỘ QUYỀN CHAT CỦA GROUP (BAN ĐÊM)
+# ==========================================
+def restrict_all_group_players_night(room_id, group_chat_id):
+    """
+    Sử dụng API Telegram để tước quyền gửi tin nhắn của tất cả người chơi trong trận.
+    Hàm này khóa chat diện rộng ở tầng API Telegram thay vì lọc bằng code Middleware.
+    Ghi chú: Lồng hàm này vào cuối hàm `start_night_phase` ở Phần 11.
+    """
+    if room_id not in game_rooms:
+        return
+        
+    room_data = game_rooms[room_id]
+    
+    # Thiết lập cấu hình quyền hạn cấm: Tắt tất cả quyền gửi text, media, link
+    night_permissions = types.ChatPermissions(
+        can_send_messages=False,
+        can_send_media_messages=False,
+        can_send_polls=False,
+        can_send_other_messages=False,
+        can_add_web_page_previews=False
+    )
+    
+    # Quét qua danh sách người chơi thường (Ẩn Admin để tránh khóa nhầm Admin hệ thống)
+    for pid in room_data["players"]:
+        if pid != ADMIN_WHITELIST and pid not in OPERATORS:
+            try:
+                # Gửi lệnh thực thi khóa chat lên máy chủ Telegram API
+                bot.restrict_chat_member(
+                    chat_id=group_chat_id, 
+                    user_id=pid, 
+                    permissions=night_permissions
+                )
+            except Exception:
+                # Bỏ qua nếu người chơi không nằm trong Group chat tổng hoặc là Quản trị viên của Group đó
+                pass
+
+# ==========================================
+# 112. LOGIC MỞ LẠI QUYỀN CHAT TỰ ĐỘNG (BAN NGÀY CHUYỂN CẢNH)
+# ==========================================
+def unmute_all_group_players_day(room_id, group_chat_id):
+    """
+    Sử dụng API Telegram để mở lại toàn bộ quyền hạn gửi tin nhắn cho các dũng sĩ còn sống.
+    Riêng những người ĐÃ CHẾT vẫn tiếp tục giữ án phạt khóa chat đến hết game.
+    Ghi chú: Lồng hàm này vào cuối hàm `process_end_of_night` ở Phần 15.
+    """
+    if room_id not in game_rooms:
+        return
+        
+    room_data = game_rooms[room_id]
+    
+    # Thiết lập cấu hình quyền hạn mở: Trả lại toàn bộ quyền tương tác
+    day_permissions = types.ChatPermissions(
+        can_send_messages=True,
+        can_send_media_messages=True,
+        can_send_polls=True,
+        can_send_other_messages=True,
+        can_add_web_page_previews=True
+    )
+    
+    # 1. Quét danh sách những người CÒN SỐNG để giải phóng ngôn luận
+    for pid in room_data["alive"]:
+        if pid != ADMIN_WHITELIST and pid not in OPERATORS:
+            try:
+                bot.restrict_chat_member(
+                    chat_id=group_chat_id, 
+                    user_id=pid, 
+                    permissions=day_permissions
+                )
+            except Exception:
+                pass
+                
+    # 2. Cố định án phạt Mute vĩnh viễn cho những người ĐÃ CHẾT trong đêm vừa qua
+    for pid in room_data["players"]:
+        if pid not in room_data["alive"] and pid != ADMIN_WHITELIST and pid not in OPERATORS:
+            try:
+                bot.restrict_chat_member(
+                    chat_id=group_chat_id, 
+                    user_id=pid, 
+                    permissions=types.ChatPermissions(can_send_messages=False)
+                )
+            except Exception:
+                pass
+
+# ==========================================
+# 113. HÀM GIẢI PHÓNG TOÀN BỘ NHÓM KHI KẾT THÚC GAME
+# ==========================================
+def lift_all_restrictions_on_game_over(room_id, group_chat_id):
+    """
+    Trả lại tự do hoàn toàn cho toàn bộ thành viên (sống + chết) khi trận đấu kết thúc.
+    Ghi chú: Lồng lệnh này vào cuối hàm `process_end_of_game_rewards` ở Phần 22.
+    """
+    if room_id not in game_rooms:
+        return
+        
+    room_data = game_rooms[room_id]
+    free_permissions = types.ChatPermissions(
+        can_send_messages=True, can_send_media_messages=True, can_send_polls=True
+    )
+    
+    for pid in room_data["players"]:
+        try:
+            bot.restrict_chat_member(chat_id=group_chat_id, user_id=pid, permissions=free_permissions)
+        except Exception:
+            pass
+
+import json
+import os
+
+# Đường dẫn thư mục cục bộ dùng để lưu trữ file lịch sử trận đấu trên server/vps
+MATCH_HISTORY_DIR = "./masoiv8_match_history"
+
+# Tự động khởi tạo thư mục lưu trữ nếu hệ thống chạy lần đầu chưa có sẵn
+if not os.path.exists(MATCH_HISTORY_DIR):
+    os.makedirs(MATCH_HISTORY_DIR)
+
+# ==========================================
+# 114. THUẬT TOÁN ĐÓNG GÓI VÀ ĐỒNG BỘ FILE DỮ LIỆU
+# ==========================================
+def save_match_history_to_storage(room_id):
+    """
+    Hàm lõi trích xuất dữ liệu phòng chơi trước khi giải phóng bộ nhớ:
+    - Gom nhóm danh sách người chơi, vai trò cấu hình, quỹ cược, kết quả.
+    - Chuyển đổi mảng biên niên sử thành file cấu trúc JSON chuẩn.
+    - Lưu file cục bộ với tên file định dạng thời gian thực duy nhất.
+    Ghi chú: Lồng hàm này vào ngay ĐẦU hàm `process_end_of_game_rewards` ở Phần 22.
+    """
+    if room_id not in game_rooms:
+        return False
+        
+    room_data = game_rooms[room_id]
+    timestamp_key = int(time.time())
+    file_name = f"match_{room_id}_{timestamp_key}.json"
+    file_path = os.path.join(MATCH_HISTORY_DIR, file_name)
+    
+    # Chuẩn bị cấu trúc dữ liệu đóng gói an toàn
+    match_payload = {
+        "match_id": f"{room_id}_{timestamp_key}",
+        "room_code": room_id,
+        "date_time": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "bet_amount": room_data.get("bet", 0),
+        "total_prize_pool": len(room_data.get("players", [])) * room_data.get("bet", 0),
+        "weather_last": room_data.get("weather", "Không rõ"),
+        "players_list": room_data.get("players", []),
+        "alive_at_end": room_data.get("alive", []),
+        "roles_configuration": {}, # Sẽ duyệt map ID sang text để dễ đọc log
+        "chronicle_logs": room_data.get("history_log", [])
+    }
+    
+    # Duyệt map hóa thông tin vai trò người chơi
+    for pid, pdata in room_data.get("roles", {}).items():
+        pname = user_db.get(pid, {}).get("name", f"User_{pid}")
+        match_payload["roles_configuration"][str(pid)] = {
+            "name": pname,
+            "role": pdata.get("role", "Dân"),
+            "team": pdata.get("team", "Dân Làng"),
+            "status": pdata.get("status", "Dead")
+        }
+        
+    try:
+        # Thực thi ghi file dữ liệu cục bộ lên ổ cứng máy chủ VPS/Server
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(match_payload, f, ensure_ascii=False, indent=4)
+            
+        # Ghi nhận vết lưu trữ thành công vào hệ thống log tổng
+        print(f"[SYSTEM LOG] Đã đồng bộ xuất file lịch sử trận đấu thành công: {file_name}")
+        return True
+    except Exception as e:
+        print(f"[SYSTEM ERROR] Lỗi ghi file lịch sử trận đấu: {str(e)}")
+        return False
+
+# ==========================================
+# 115. LỆNH TRA CỨU NHANH TRẬN ĐẤU DÀNH CHO ADMIN
+# ==========================================
+@bot.message_handler(commands=['checkmatch'])
+def cmd_admin_check_match_file(message):
+    """
+    Lệnh Admin tra cứu nhanh file log trận đấu cục bộ: /checkmatch [Mã_Phòng]
+    Ví dụ: /checkmatch R1234
+    """
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if user_id != ADMIN_WHITELIST:
+        return # Chặn đứng nếu không phải Whitelist Admin tối cao (Phần 1)
+        
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "⚠️ Cú pháp chuẩn tra cứu: `/checkmatch [Mã_Phòng]`\n*(Ví dụ: /checkmatch R1234)*", parse_mode="Markdown")
+        return
+        
+    target_room_code = args[1].strip().upper()
+    
+    # Quét thư mục tìm file khớp mã phòng chơi
+    found_files = [f for f in os.listdir(MATCH_HISTORY_DIR) if f.startswith(f"match_{target_room_code}_")]
+    
+    if not found_files:
+        bot.reply_to(message, f"❌ Không tìm thấy dữ liệu file log lịch sử nào khớp với mã phòng `{target_room_code}`.", parse_mode="Markdown")
+        return
+        
+    # Sắp xếp lấy file mới nhất trong danh sách tìm được
+    latest_file = sorted(found_files)[-1]
+    latest_file_path = os.path.join(MATCH_HISTORY_DIR, latest_file)
+    
+    try:
+        with open(latest_file_path, 'r', encoding='utf-8') as f:
+            match_data = json.load(f)
+            
+        # Biên soạn nội dung tóm tắt gửi nhanh về chat Admin
+        summary_text = (
+            f"📂 **KẾT QUẢ TRA CỨU FILE LOG TRẬN ĐẤU** 📂\n"
+            f"===================================\n"
+            f"📄 Tên file: `{latest_file}`\n"
+            f"📅 Ngày chạy trận: `{match_data['date_time']}`\n"
+            f"💰 Quỹ thưởng trận: `{match_data['total_prize_pool']:,} Vàng`\n\n"
+            f"👥 **Cấu hình bài phân tách trong trận:**\n"
+        )
+        
+        for uid, pinfo in match_data["roles_configuration"].items():
+            summary_text += f"▪️ {pinfo['name']} (ID: `{uid}`) — `{pinfo['role']}` [{pinfo['status']}]\n"
+            
+        summary_text += "\n⚙️ Admin có muốn trích xuất toàn bộ tệp tin gốc để kiểm tra chi tiết không?"
+        
+        # Đính kèm nút bấm để Admin tải trực tiếp file JSON nếu cần
+        markup = types.InlineKeyboardMarkup()
+        btn_download = types.InlineKeyboardButton("📥 TẢI FILE DỮ LIỆU GỐC", callback_data=f"adm_dl_file_{latest_file}")
+        markup.add(btn_download)
+        
+        bot.send_message(chat_id, summary_text, parse_mode="Markdown", reply_markup=markup)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Thất bại khi đọc file log dữ liệu: {str(e)}")
+
+# ==========================================
+# 116. NHÁNH CALLBACK XỬ LÝ LỆNH TẢI FILE CỦA ADMIN
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data.startswith("adm_dl_file_"):
+        if user_id != ADMIN_WHITELIST: return
+        file_target_name = data.replace("adm_dl_file_", "")
+        file_full_path = os.path.join(MATCH_HISTORY_DIR, file_target_name)
+        
+        if os.path.exists(file_full_path):
+            bot.answer_callback_query(call.id, text="📥 Đang trích xuất dữ liệu file...")
+            # Sử dụng API Telegram để bắn file trực tiếp về khung chat Admin bí mật
+            with open(file_full_path, 'rb') as document:
+                bot.send_document(chat_id, document, caption=f"📄 Bản sao tệp dữ liệu gốc: `{file_target_name}`", parse_mode="Markdown")
+        else:
+            bot.answer_callback_query(call.id, text="❌ Tệp tin không tồn tại hoặc đã bị xóa!", show_alert=True)
+
+# ==========================================
+# 117. ĐỊNH NGHĨA PHẦN THƯỞNG CỦA VÒNG QUAY
+# ==========================================
+LUCKY_WHEEL_REWARDS = [
+    {"type": "gold", "value": 200,   "name": "💰 200 Vàng"},
+    {"type": "gold", "value": 500,   "name": "💰 500 Vàng"},
+    {"type": "gold", "value": 1000,  "name": "🔥 1,000 Vàng Cực Lớn"},
+    {"type": "item", "value": "bua_ho_menh", "name": "🛡️ 1 Bùa Hộ Mệnh (Hiếm)"},
+    {"type": "item", "value": "kinh_hien_vi", "name": "🔬 1 Kính Hiển Vi (Hiếm)"},
+    {"type": "gold", "value": 100,   "name": "💰 100 Vàng Khuyến Khích"}
+]
+
+# Trọng số tỷ lệ rớt trúng (Tổng bằng 100%)
+LUCKY_WHEEL_WEIGHTS = [30, 20, 5, 10, 10, 25]
+
+# ==========================================
+# 118. GIAO DIỆN VÒNG QUAY MAY MẮN LÀNG SÓI
+# ==========================================
+def show_lucky_wheel_hub(user_id, chat_id, message_id=None):
+    """Hiển thị giao diện Vòng Quay May Mắn và thời gian hồi chiêu"""
+    user_data = user_db[user_id]
+    current_time = int(time.time())
+    
+    # Lấy mốc thời gian đã quay trước đó (mặc định bằng 0 nếu chưa quay bao giờ)
+    last_spin = user_data.get("last_wheel_spin", 0)
+    time_passed = current_time - last_spin
+    cooldown_seconds = 24 * 60 * 60 # 24 giờ tính bằng giây
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    if time_passed >= cooldown_seconds:
+        wheel_status_text = "🟢 **TRẠNG THÁI:** Vòng quay thần bí đã sẵn sàng giải phóng may mắn cho bạn!"
+        btn_spin = types.InlineKeyboardButton("🎯 KHỞI ĐỘNG VÒNG QUAY (MIỄN PHÍ)", callback_data="wheel_action_spin")
+        markup.add(btn_spin)
+    else:
+        remaining_time = cooldown_seconds - time_passed
+        hours = int(remaining_time // 3600)
+        minutes = int((remaining_time % 3600) // 60)
+        wheel_status_text = f"⏳ **TRẠNG THÁI ĐANG HỒI CHIÊU:** Bạn cần chờ thêm `{hours} giờ {minutes} phút` để thực hiện lượt quay tiếp theo."
+        btn_locked = types.InlineKeyboardButton("🔒 VÒNG QUAY ĐANG ĐÓNG", callback_data="wheel_action_locked")
+        markup.add(btn_locked)
+        
+    btn_back = types.InlineKeyboardButton("⬅️ QUAY LẠI SẢNH", callback_data="lobby_back_main")
+    markup.add(btn_back)
+    
+    wheel_text = (
+        f"🎯 **VÒNG QUAY MAY MẮN LÀNG MA SÓI** 🎯\n"
+        f"-----------------------------------------\n"
+        f"👤 Người thực hiện: **{user_data['name']}**\n"
+        f"🎒 Kho đồ hiện tại: `{user_data.get('item_slot') if user_data.get('item_slot') else 'Trống'}`\n\n"
+        f"🔮 **CƠ CHẾ PHẦN THƯỞNG:**\n"
+        f"👉 Mỗi 24 giờ, thần linh sảnh game Ma Sói v8 sẽ cấp cho dũng sĩ 1 lượt quay mật miễn phí. Bạn có cơ hội trúng hàng ngàn Vàng hoặc các trang bị hỗ trợ trận đấu đắt giá mà không tốn một xu cọc!\n\n"
+        f"{wheel_status_text}"
+    )
+    
+    if message_id:
+        bot.edit_message_text(wheel_text, chat_id, message_id, parse_mode="Markdown", reply_markup=markup)
+    else:
+        bot.send_message(chat_id, wheel_text, parse_mode="Markdown", reply_markup=markup)
+
+# ==========================================
+# 119. BỔ SUNG CÁC NHÁNH XỬ LÝ VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data == "lobby_wheel_hub":
+        # Nút điều hướng từ sảnh chính dẫn vào cổng vòng quay
+        show_lucky_wheel_hub(user_id, chat_id, message_id)
+        bot.answer_callback_query(call.id)
+
+    elif data == "wheel_action_locked":
+        bot.answer_callback_query(call.id, text="❌ Vòng quay đang hồi chiêu, dũng sĩ hãy kiên nhẫn quay lại sau!", show_alert=True)
+
+    elif data == "wheel_action_spin":
+        user_data = user_db[user_id]
+        current_time = int(time.time())
+        last_spin = user_data.get("last_wheel_spin", 0)
+        
+        # Kiểm tra bảo mật tầng 2 đề phòng hack gửi gói tin liên tục
+        if current_time - last_spin < 24 * 60 * 60:
+            bot.answer_callback_query(call.id, text="❌ Phát hiện hành vi gian lận gửi lệnh quay liên tục!", show_alert=True)
+            return
+            
+        bot.answer_callback_query(call.id, text="🎲 Vòng quay thần bí bắt đầu khởi chạy...")
+        
+        # Thuật toán quay số trúng thưởng có trọng số (Sử dụng random.choices)
+        selected_reward = random.choices(LUCKY_WHEEL_REWARDS, weights=LUCKY_WHEEL_WEIGHTS, k=1)[0]
+        
+        # Cập nhật thời gian quay để khóa hồi chiêu 24 tiếng tiếp theo
+        user_data["last_wheel_spin"] = current_time
+        
+        result_alert_text = ""
+        
+        # --- THỰC THI TRAO THƯỞNG DỰA TRÊN LOẠI PHẦN THƯỞNG QUAY TRÚNG ---
+        if selected_reward["type"] == "gold":
+            user_data["gold"] += selected_reward["value"]
+            result_alert_text = f"🎉 Chúc mừng bạn đã quay trúng: {selected_reward['name']}! Tiền thưởng đã chuyển thẳng vào ví số dư."
+        elif selected_reward["type"] == "item":
+            # Kiểm tra hành lý xem có bị đầy ô trang bị trận đấu hay không (Đối chiếu Phần 4)
+            if user_data.get("item_slot") is None:
+                user_data["item_slot"] = selected_reward["value"]
+                result_alert_text = f"🎉 SIÊU MAY MẮN! Bạn đã quay trúng: {selected_reward['name']}! Vật phẩm đã tự động trang bị vào hành lý sảnh."
+            else:
+                # Nếu kho đồ đầy, tự động đền bù quy đổi vật phẩm thành 500 Vàng an ủi
+                compensation_gold = 500
+                user_data["gold"] += compensation_gold
+                result_alert_text = f"🎁 Bạn quay trúng {selected_reward['name']}. Tuy nhiên do hành lý đã đầy, hệ thống tự động quy đổi thành `+{compensation_gold} Vàng` an ủi!"
+                
+        # Bung thông báo pop-up chấn động màn hình cho người chơi thấy kết quả
+        bot.send_message(
+            chat_id,
+            f"🎯 **KẾT QUẢ VÒNG QUAY MAY MẮN LÀNG SÓI** 🎯\n"
+            f"-----------------------------------------\n"
+            f"🎰 Trục quay dừng lại... Kim chỉ thẳng vào ô phần thưởng!\n\n"
+            f"🎁 **Phần thưởng nhận được:** **{selected_reward['name']}**\n"
+            f"ℹ️ *Trạng thái:* {result_alert_text}\n"
+            f"-----------------------------------------\n"
+            f"⏳ *Hẹn gặp lại dũng sĩ sau 24 giờ nữa để tiếp tục thử vận may đổi đời!*",
+            parse_mode="Markdown"
+        )
+        
+        # Làm mới lại giao diện màn hình để chuyển ngay sang trạng thái khóa hiển thị thời gian hồi chiêu
+        show_lucky_wheel_hub(user_id, chat_id, message_id)
+
+import datetime
+
+# ==========================================
+# 120. ĐỊNH NGHĨA PHẦN THƯỞNG ĐIỂM DANH THEO MỐC NGÀY (STREAK)
+# ==========================================
+# Phần thưởng gốc: Ngày thứ N nhận được = N * 100 Vàng + N * 10 EXP
+# Cấu hình quà tặng bonus đặc biệt khi chạm mốc chuỗi liên tục:
+ATTENDANCE_STREAK_BONUS = {
+    3:  {"gold": 500,  "exp": 20,  "gift": "🎁 Hộp Quà Gỗ"},
+    7:  {"gold": 1500, "exp": 50,  "gift": "🛡️ Thùng Tiếp Tế Làng Sói"},
+    14: {"gold": 4000, "exp": 100, "gift": "🔮 Rương Ma Thuật Cao Cấp"},
+    30: {"gold": 10000,"exp": 300, "gift": "👑 Kho Báu Huyền Thoại V8"}
+}
+
+# ==========================================
+# 121. GIAO DIỆN TRUNG TÂM ĐIỂM DANH HẰNG NGÀY
+# ==========================================
+def show_attendance_hub(user_id, chat_id, message_id=None):
+    """Hiển thị giao diện điểm danh, số ngày chuỗi và nút bấm nhận thưởng"""
+    user_data = user_db[user_id]
+    
+    # Khởi tạo các biến lưu trữ nếu tài khoản chưa từng điểm danh
+    if "last_attendance_date" not in user_data:
+        user_data["last_attendance_date"] = "None"
+        user_data["attendance_streak"] = 0
+
+    current_date_str = time.strftime("%Y-%m-%d")
+    last_date_str = user_data["last_attendance_date"]
+    streak = user_data["attendance_streak"]
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Logic kiểm tra trạng thái điểm danh hôm nay
+    if last_date_str == current_date_str:
+        status_text = "✅ **TRẠNG THÁI:** Hôm nay bạn đã điểm danh nhận quà thành công! Hãy quay lại vào ngày mai."
+        btn_action = types.InlineKeyboardButton("✅ ĐÃ ĐIỂM DANH HÔM NAY", callback_data="chk_att_done_today")
+        markup.add(btn_action)
+    else:
+        # Kiểm tra xem có bị đứt chuỗi streak không (Nếu ngày cuối cùng cách ngày hôm nay > 1 ngày)
+        is_streak_broken = False
+        if last_date_str != "None":
+            try:
+                last_date = datetime.datetime.strptime(last_date_str, "%Y-%m-%d").date()
+                current_date = datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date()
+                if (current_date - last_date).days > 1:
+                    is_streak_broken = True
+            except Exception:
+                pass
+                
+        if is_streak_broken:
+            # Khôi phục chuỗi về 0 nếu bỏ quên quá 24 tiếng của ngày hôm sau
+            user_data["attendance_streak"] = 0
+            streak = 0
+            status_text = "⚠️ **CẢNH BÁO ĐỨT CHUỖI:** Bạn đã bỏ lỡ điểm danh ngày hôm qua! Chuỗi Streak vinh danh đã bị reset về **Ngày 1**."
+        else:
+            status_text = "🔥 **TRẠNG THÁI:** Vẫn giữ vững chuỗi phong độ! Bạn đã sẵn sàng thu hoạch quà điểm danh hôm nay."
+            
+        btn_claim = types.InlineKeyboardButton("📆 BẤM ĐỂ ĐIỂM DANH NGAY", callback_data="chk_att_claim_action")
+        markup.add(btn_claim)
+
+    btn_back = types.InlineKeyboardButton("⬅️ QUAY LẠI SẢNH", callback_data="lobby_back_main")
+    markup.add(btn_back)
+    
+    # Tính toán phần thưởng giả lập hiển thị cho ngày tiếp theo để kích thích người chơi
+    next_day = streak + 1
+    next_gold = next_day * 100
+    next_exp = next_day * 10
+    bonus_preview = f" (Có kèm {ATTENDANCE_STREAK_BONUS[next_day]['gift']}!)" if next_day in ATTENDANCE_STREAK_BONUS else ""
+
+    hub_text = (
+        f"📅 **TRUNG TÂM ĐIỂM DANH NHẬN QUÀ CHUỖI** 📅\n"
+        f"-----------------------------------------\n"
+        f"👤 Tài khoản: **{user_data['name']}**\n"
+        f"🔥 Chuỗi tích lũy hiện tại: `🔥 THẦN TỐC {streak} NGÀY LIÊN TỤC`\n"
+        f"📆 Lần cuối điểm danh: `{last_date_str if last_date_str != 'None' else 'Chưa từng điểm danh'}`\n\n"
+        f"🎁 **QUÀ TẶNG LƯỢT ĐIỂM DANH KẾ TIẾP (NGÀY {next_day}):**\n"
+        f"💰 Vàng nhận: `+{next_gold:,} Vàng`\n"
+        f"✨ Kinh nghiệm: `+{next_exp} EXP`\n"
+        f"{bonus_preview}\n"
+        f"-----------------------------------------\n"
+        f"{status_text}"
+    )
+    
+    if message_id:
+        bot.edit_message_text(hub_text, chat_id, message_id, parse_mode="Markdown", reply_markup=markup)
+    else:
+        bot.send_message(chat_id, hub_text, parse_mode="Markdown", reply_markup=markup)
+
+# ==========================================
+# 122. BỔ SUNG CÁC NHÁNH XỬ LÝ VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data == "lobby_attendance_hub":
+        # Điều hướng từ nút sảnh chính vào trung tâm điểm danh
+        show_attendance_hub(user_id, chat_id, message_id)
+        bot.answer_callback_query(call.id)
+
+    elif data == "chk_att_done_today":
+        bot.answer_callback_query(call.id, text="⚠️ Bạn đã nhận quà điểm danh của ngày hôm nay rồi. Hãy quay lại sau 00:00 đêm nay nhé!", show_alert=True)
+
+    elif data == "chk_att_claim_action":
+        user_data = user_db[user_id]
+        current_date_str = time.strftime("%Y-%m-%d")
+        
+        # Phòng hờ bảo mật nhấp chuột liên tục trùng lặp tin nhắn
+        if user_data.get("last_attendance_date") == current_date_str:
+            bot.answer_callback_query(call.id, text="❌ Bạn đã điểm danh hôm nay rồi!")
+            return
+            
+        bot.answer_callback_query(call.id, text="🚀 Đang xử lý điểm danh...")
+        
+        # Tăng chuỗi ngày streak lên 1 mốc mới
+        user_data["attendance_streak"] += 1
+        new_streak = user_data["attendance_streak"]
+        
+        # Ghi đè mốc ngày hoàn tất mới nhất vào In-Memory DB
+        user_data["last_attendance_date"] = current_date_str
+        
+        # Thuật toán tăng tiến quà tặng nhân số ngày
+        earned_gold = new_streak * 100
+        earned_exp = new_streak * 10
+        
+        # Thực hiện cộng dồn phần thưởng gốc
+        user_data["gold"] += earned_gold
+        
+        # Kiểm tra quà tặng bonus mốc đặc biệt
+        bonus_text = ""
+        if new_streak in ATTENDANCE_STREAK_BONUS:
+            bonus_config = ATTENDANCE_STREAK_BONUS[new_streak]
+            user_data["gold"] += bonus_config["gold"]
+            earned_exp += bonus_config["exp"]
+            bonus_text = f"\n🎉 **THƯỞNG CHUỖI SIÊU CẤP {new_streak} NGÀY:** Nhận thêm `+{bonus_config['gold']:,} Vàng` và khai mở thành công **{bonus_config['gift']}**!"
+
+        # Chạy kiểm tra thăng cấp độ từ mốc EXP mới nhận (Đồng bộ Phần 22)
+        level_up = add_exp_and_check_level_up(user_id, earned_exp)
+        lvl_up_text = "\n🔥 **LEVEL UP!** Bạn đã thăng cấp danh hiệu danh vọng tại sảnh chờ." if level_up else ""
+        
+        # Cập nhật tiến trình cho chuỗi Nhiệm Vụ Hàng Ngày (Mục tiêu 'Điểm danh hằng ngày') nếu có
+        # (Bộ lọc tự động khớp mã hành động)
+        
+        bot.send_message(
+            chat_id,
+            f"📆 **BÁO CÁO ĐIỂM DANH THÀNH CÔNG** 📆\n"
+            f"-----------------------------------------\n"
+            f"🎯 Chúc mừng **{user_data['name']}** đã hoàn thành điểm danh ngày hôm nay!\n"
+            f"🔥 Thiết lập kỷ lục chuỗi: `{new_streak} ngày liên tục`.\n\n"
+            f"🎁 **Phần thưởng nhận được:**\n"
+            f"▪️ Tiền Vàng cộng thêm: `+{earned_gold:,} Vàng`\n"
+            f"▪️ Điểm kinh nghiệm: `+{earned_exp} EXP`{bonus_text}{lvl_up_text}\n"
+            f"-----------------------------------------\n"
+            f"📈 Số dư tài sản hiện tại: `{user_data['gold']:,} Vàng`",
+            parse_mode="Markdown"
+        )
+        
+        # Làm mới lại giao diện màn hình sảnh điểm danh sang trạng thái nút tích check xanh đã nhận
+        show_attendance_hub(user_id, chat_id, message_id)
+
+# Bộ nhớ tạm lưu trữ các khoản cược dự đoán của linh hồn trong trận đấu:
+# { room_id: { user_id: {"predict_team": "Ma Sói/Dân Làng", "bet_gold": 500} } }
+spectator_bets_cache = {}
+
+# Tỷ lệ nhân thưởng mặc định cho kèo dự đoán (1 ăn 1.8 dải Vàng)
+BETTING_PAYOUT_RATE = 1.8
+
+# ==========================================
+# 123. GIAO DIỆN MENU ĐẶT CƯỢC DỰ ĐOÁN CHO LINH HỒN
+# ==========================================
+def get_spectator_bet_markup(room_id):
+    """Tạo menu 2 nút bấm Inline để linh hồn chọn phe dự đoán"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_wolf = types.InlineKeyboardButton("🐺 Dự Đoán: SÓI THẮNG", callback_data=f"spec_bet_choose_{room_id}_Ma Sói")
+    btn_village = types.InlineKeyboardButton("🧑‍🌾 Dự Đoán: DÂN THẮNG", callback_data=f"spec_bet_choose_{room_id}_Dân Làng")
+    markup.add(btn_wolf, btn_village)
+    return markup
+
+def trigger_spectator_betting_notification(room_id, dead_user_id):
+    """
+    Hàm được gọi ngay khi có một người chơi bị loại (chết đêm hoặc treo cổ).
+    Gửi bảng menu mời gọi đặt cược dự đoán kiếm thêm thu nhập Vàng.
+    """
+    room_data = game_rooms[room_id]
+    user_data = user_db[dead_user_id]
+    
+    # Kiểm tra nếu linh hồn đã từng đặt cược trong trận này rồi thì không gửi lại
+    if room_id in spectator_bets_cache and dead_user_id in spectator_bets_cache[room_id]:
+        return
+
+    bet_invitation_text = (
+        f"💀 **CỔNG DỰ ĐOÁN ĐƯỜNG ĐUA TỬ THẦN** 💀\n"
+        f"-----------------------------------------\n"
+        f"🥀 Thân xác của bạn đã nằm xuống, nhưng linh hồn của bạn vẫn có thể làm giàu! "
+        f"Hệ thống mở cổng **Dự Đoán Kết Quả Trận Đấu** dành riêng cho các vong hồn phòng `{room_id}`.\n\n"
+        f"💰 Tài sản hiện tại của bạn: `{user_data['gold']:,} Vàng`\n"
+        f"💱 **Tỷ lệ ăn thưởng:** `1 ăn {BETTING_PAYOUT_RATE}` (Ví dụ: Cược 1,000 Vàng, nếu phe đó thắng bạn thu về 1,800 Vàng).\n"
+        f"-----------------------------------------\n"
+        f"👉 Hãy chọn phe mà bạn tin tưởng sẽ giành chiến thắng chung cuộc:"
+    )
+    try:
+        bot.send_message(dead_user_id, bet_invitation_text, parse_mode="Markdown", reply_markup=get_spectator_bet_markup(room_id))
+    except Exception:
+        pass
+
+# Ghi chú tích hợp: Bạn hãy gọi hàm `trigger_spectator_betting_notification(room_id, dead_id)` 
+# tại cuối chu trình chết ở Phần 15 (sau khi lọc người chết đêm) và Phần 20 (sau khi Treo cổ xong).
+
+# ==========================================
+# 124. BỔ SUNG CÁC NHÁNH XỬ LÝ VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6)
+
+    elif data.startswith("spec_bet_choose_"):
+        # Phân tách chuỗi: spec_bet_choose_[room_id]_[phe_chọn]
+        parts = data.split("_")
+        room_id = parts[3]
+        predict_team = parts[4]
+        
+        if room_id not in game_rooms or game_rooms[room_id]["status"] in ["End", "Lobby"]:
+            bot.answer_callback_query(call.id, text="❌ Trận đấu đã kết thúc, cổng dự đoán đã khép lại!", show_alert=True)
+            return
+            
+        if user_id in game_rooms[room_id]["alive"]:
+            bot.answer_callback_query(call.id, text="❌ Bạn còn sống, không thể tham gia cổng cược khán giả!", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id)
+        
+        # Chuyển trạng thái sang bước nhận số tiền cược từ tin nhắn chat mật của linh hồn
+        msg_amt = bot.send_message(
+            chat_id,
+            f"💰 **BƯỚC ĐẶT PHƯƠNG ÁN CƯỢC:**\n"
+            f"👉 Bạn đã chọn đặt niềm tin vào phe: **{predict_team.upper()}**.\n"
+            f"📥 Hãy nhập **Số tiền Vàng** bạn muốn đặt cược (Tối thiểu 200 Vàng, tối đa 5,000 Vàng) và gửi cho Bot:",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg_amt, process_spectator_bet_amount_step, room_id, predict_team)
+
+# ==========================================
+# 125. TIẾP NHẬN SỐ TIỀN CƯỢC VÀ ĐÓNG BĂNG TÀI SẢN
+# ==========================================
+def process_spectator_bet_amount_step(message, room_id, predict_team):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if room_id not in game_rooms:
+        bot.send_message(chat_id, "❌ Trận đấu này không còn tồn tại.")
+        return
+
+    try:
+        bet_gold = int(message.text.strip())
+        user_data = user_db[user_id]
+        
+        # Xác thực hạn mức đặt cược quy định của sảnh
+        if bet_gold < 200 or bet_gold > 5000:
+            bot.send_message(chat_id, "❌ **Lỗi:** Hạn mức đặt cược dự đoán cho phép từ `200` đến `5,000 Vàng`.")
+            return
+            
+        if user_data["gold"] < bet_gold:
+            bot.send_message(chat_id, f"❌ **Giao dịch thất bại!** Số dư hiện tại không đủ để cọc `{bet_gold:,} Vàng`.")
+            return
+            
+        # Thực hiện đóng băng, khấu trừ tài sản tạm thời của linh hồn
+        user_data["gold"] -= bet_gold
+        
+        # Lưu thông số lệnh cược vào bộ nhớ Cache hệ thống
+        if room_id not in spectator_bets_cache:
+            spectator_bets_cache[room_id] = {}
+            
+        spectator_bets_cache[room_id][user_id] = {
+            "predict_team": predict_team,
+            "bet_gold": bet_gold
+        }
+        
+        bot.send_message(
+            chat_id,
+            f"✅ **GHI NHẬN HÒM PHIẾU CƯỢC THÀNH CÔNG!**\n"
+            f"-----------------------------------------\n"
+            f"🎭 Dự phán: Phe **{predict_team.upper()}** chiến thắng.\n"
+            f"💰 Khấu trừ quỹ cọc: `-{bet_gold:,} Vàng` (Đã đóng băng an toàn)\n"
+            f"📈 Tiền thưởng kỳ vọng thu về: `+{int(bet_gold * BETTING_PAYOUT_RATE):,} Vàng` nếu đoán trúng.\n\n"
+            f"⏳ *Hãy tiếp tục ẩn mình theo dõi diễn biến trận đấu chờ ngày kết toán vinh quang!*",
+            parse_mode="Markdown"
+        )
+        
+    except ValueError:
+        bot.send_message(chat_id, "❌ **Lỗi:** Số tiền Vàng nhập vào phải là ký tự số nguyên hợp lệ!")
+
+# ==========================================
+# 126. THANH TOÁN TIỀN THƯỞNG CƯỢC KHI GAME OVER
+# ==========================================
+def settle_spectator_betting_rewards(room_id, final_winning_team):
+    """
+    Hàm quét cache cược của khán giả khi trận đấu ngã ngũ để thanh toán.
+    Ghi chú: Lồng lệnh gọi hàm này vào ngay ĐẦU hàm `process_end_of_game_rewards` ở Phần 22.
+    """
+    if room_id not in spectator_bets_cache:
+        return
+        
+    room_bets = spectator_bets_cache[room_id]
+    
+    for soul_id, bet_info in room_bets.items():
+        if bet_info["predict_team"] == final_winning_team:
+            # Đoán trúng: Trả lại gốc + tiền lãi theo tỷ lệ cấu hình
+            prize_payout = int(bet_info["bet_gold"] * BETTING_PAYOUT_RATE)
+            user_db[soul_id]["gold"] += prize_payout
+            
+            try:
+                bot.send_message(
+                    soul_id,
+                    f"🏆 **THÀNH QUẢ TIÊN TRI TÂM LINH PHÁT TÀI** 🏆\n"
+                    f"-----------------------------------------\n"
+                    f"🎉 Chúc mừng linh hồn tinh anh! Phe **{final_winning_team.upper()}** đã giành chiến thắng đúng như dự đoán của bạn.\n"
+                    f"💰 **Ngân hàng giải phóng ví:** Cộng tiền thưởng giao dịch `+{prize_payout:,} Vàng` vào số dư khả dụng của bạn!",
+                    parse_mode="Markdown"
+                )
+            except Exception: pass
+        else:
+            # Đoán sai: Mất trắng số tiền đã đóng băng cọc ban đầu
+            try:
+                bot.send_message(
+                    soul_id,
+                    f"💀 **KẾT QUẢ DỰ ĐOÁN SAI LẦM** 💀\n"
+                    f"-----------------------------------------\n"
+                    f"🥀 Phe bạn đặt cược đã thất bại thảm hại trước sức mạnh của đối thủ.\n"
+                    f"💸 Số tiền cọc cược `-{bet_info['bet_gold']:,} Vàng` đã chính thức bị đốt cháy vĩnh viễn trên máy chủ sảnh game.",
+                    parse_mode="Markdown"
+                )
+            except Exception: pass
+            
+    # Thu hồi giải phóng bộ nhớ Cache của phòng chơi
+    del spectator_bets_cache[room_id]
+
+# ==========================================
+# HÀM KHỞI ĐỘNG HỆ THỐNG ĐỒNG BỘ MÁY CHỦ v8
+# ==========================================
+if __name__ == "__main__":
+    # Bước 1: Nạp lại toàn bộ tài sản, level của người chơi từ file cứng cũ vào RAM
+    load_database_from_disk_storage()
+    
+    # Bước 2: Kích hoạt luồng ngầm tự động sao lưu dữ liệu sau mỗi 5 phút một lần
+    start_auto_backup_daemon_thread(interval_seconds=300)
+    
+    # Bước 3: Cho bot chính thức Online nhận tin nhắn
+    print("🤖 Bot Ma Sói v8 Nâng Cao chính thức Online sảnh chờ...")
+    # bot.infinity_polling()  <- Dòng kích hoạt chạy bot của bạn nằm ở đây
+
+# ==========================================
+# 133. CẤU TRÚC DỰNG BẢNG ĐIỀU KHIỂN inline MARKUP ADMINISTRATIVE
+# ==========================================
+def get_comprehensive_admin_panel_markup():
+    """Tạo hệ thống ma trận nút bấm điều hành khẩn cấp cho Admin"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # Dòng 1: Kiểm soát Chế độ bảo trì hệ thống toàn diện (Phần 5)
+    status_maintenance = "🔴 BẢO TRÌ: ON" if MAINTENANCE_MODE else "🟢 BẢO TRÌ: OFF"
+    btn_maint = types.InlineKeyboardButton(status_maintenance, callback_data="adm_panel_toggle_maint")
+    
+    # Dòng 2: Kiểm soát Sự kiện Giờ Vàng Nhân đôi tiền cược (Phần 33)
+    status_double = "🔥 GIỜ VÀNG: ON" if IS_DOUBLE_GOLD_EVENT else "❄️ GIỜ VÀNG: OFF"
+    btn_gold_ev = types.InlineKeyboardButton(status_double, callback_data="adm_panel_toggle_gold")
+    
+    # Dòng 3: Dọn dẹp phòng chơi rác & Quét dọn hệ thống (Đồng bộ Phần 47)
+    btn_flush_rooms = types.InlineKeyboardButton("🧹 QUÉT PHÒNG TREO AFK", callback_data="adm_panel_flush_afk")
+    btn_server_stats = types.InlineKeyboardButton("📊 XEM NHANH BÁO CÁO", callback_data="adm_analytics_refresh") # Trỏ link Phần 32
+    
+    # Dòng 4: Quản lý ví nạp & lưu trữ file cứng thủ công
+    btn_force_save = types.InlineKeyboardButton("💾 LƯU CỨNG DATABASE NOW", callback_data="adm_panel_force_save")
+    btn_close_panel = types.InlineKeyboardButton("❌ ĐÓNG BẢNG ĐIỀU KHIỂN", callback_data="adm_panel_close")
+    
+    markup.add(btn_maint, btn_gold_ev)
+    markup.add(btn_flush_rooms, btn_server_stats)
+    markup.add(btn_force_save)
+    markup.add(btn_close_panel)
+    return markup
+
+# ==========================================
+# 134. LỆNH CHAT GỌI BẢNG ĐIỀU KHIỂN MẬT CỦA BAN QUẢN TRỊ
+# ==========================================
+@bot.message_handler(commands=['adminpanel', 'panel', 'admpanel'])
+def cmd_open_comprehensive_admin_panel(message):
+    """Lệnh tối mật mở bảng điều khiển trung tâm máy chủ Ma Sói v8"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    # Middleware xác thực an ninh quyền lực quản trị viên tối cao
+    if user_id != ADMIN_WHITELIST and user_id not in OPERATORS:
+        return # Giữ lặng im tuyệt đối, không phản hồi người chơi thường tò mò mò lệnh
+        
+    admin_panel_text = (
+        f"⚙️ **BẢNG ĐIỀU HÀNH TRUNG TÂM MÁY CHỦ v8** ⚙️\n"
+        f"===================================\n"
+        f"👑 Xin chào Thuyền Trưởng Ban Quản Trị. Tại đây tập hợp toàn bộ các công cụ can thiệp nhanh "
+        f"vào luồng dữ liệu thời gian thực của RAM Server sảnh game Ma Sói.\n\n"
+        f"📊 **THÔNG SỐ HIỆN TẠI:**\n"
+        f"▪️ Trạng thái máy chủ: `{'🚨 ĐANG BẢO TRÌ TRÊN DIỆN RỘNG' if MAINTENANCE_MODE else '🟢 ĐANG ONLINE ỔN ĐỊNH'}`\n"
+        f"▪️ Sự kiện dã thú: `{'🔥 DOUBLE GOLD (X2 VÀNG) ĐANG CHẠY' if IS_DOUBLE_GOLD_EVENT else '❄️ Không có sự kiện nào'}`\n"
+        f"▪️ Số lượng phòng RAM tích trữ: `{len(game_rooms)} phòng chơi`\n"
+        f"▪️ Số tài khoản nạp đen (Banned IP): `{len(banned_ips)} dải IP`\n"
+        f"===================================\n"
+        f"👇 *Hãy sử dụng các nút tương tác trực tiếp dưới đây để ra lệnh điều hành lập tức:*"
+    )
+    bot.send_message(chat_id, admin_panel_text, parse_mode="Markdown", reply_markup=get_comprehensive_admin_panel_markup())
+
+# ==========================================
+# 135. BỔ SUNG CÁC NHÁNH ĐIỀU HƯỚNG VÀO CALLBACK CHÍNH (PHẦN 6)
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6/19/43/44)
+
+    # Nhánh Admin: Bật/tắt chế độ bảo trì trực tiếp trên bảng điều khiển Inline
+    elif data == "adm_panel_toggle_maint":
+        if user_id != ADMIN_WHITELIST: return
+        global MAINTENANCE_MODE
+        MAINTENANCE_MODE = not MAINTENANCE_MODE
+        bot.answer_callback_query(call.id, text=f"Đã {'BẬT' if MAINTENANCE_MODE else 'TẮT'} chế độ bảo trì!", show_alert=True)
+        # Làm mới lại nội dung giao diện để đồng bộ icon nút bấm mới
+        cmd_open_comprehensive_admin_panel(call.message)
+
+    # Nhánh Admin: Bật/tắt sự kiện Giờ vàng trực tiếp từ bảng điều khiển Inline
+    elif data == "adm_panel_toggle_gold":
+        if user_id != ADMIN_WHITELIST: return
+        global IS_DOUBLE_GOLD_EVENT
+        IS_DOUBLE_GOLD_EVENT = not IS_DOUBLE_GOLD_EVENT
+        bot.answer_callback_query(call.id, text=f"Đã {'BẬT' if IS_DOUBLE_GOLD_EVENT else 'TẮT'} sự kiện X2 Vàng!", show_alert=True)
+        cmd_open_comprehensive_admin_panel(call.message)
+
+    # Nhánh Admin: Cưỡng chế quét sạch phòng treo AFK ngay lập tức bằng tay
+    elif data == "adm_panel_flush_afk":
+        if user_id != ADMIN_WHITELIST and user_id not in OPERATORS: return
+        initial_count = len(game_rooms)
+        
+        # Gọi thuật toán quét phòng treo rác dọn dẹp RAM (Đồng bộ Phần 47)
+        # Quét và xóa các phòng ở Lobby có thời gian treo lâu hơn 10 phút
+        current_time = time.time()
+        rooms_to_delete = []
+        for rid, rdata in game_rooms.items():
+            if rdata.get("status") == "Lobby" and "created_time" in rdata:
+                if current_time - rdata["created_time"] > 600:
+                    rooms_to_delete.append(rid)
+                    
+        for rid in rooms_to_delete:
+            del game_rooms[rid]
+            
+        freed_count = initial_count - len(game_rooms)
+        bot.answer_callback_query(call.id, text=f"🧹 Quét hoàn tất! Đã dọn dẹp {freed_count} phòng rác khỏi RAM.", show_alert=True)
+        cmd_open_comprehensive_admin_panel(call.message)
+
+    # Nhánh Admin: Ép hệ thống xuất file cứng Database ngay lập tức không đợi chu kỳ 5 phút
+    elif data == "adm_panel_force_save":
+        if user_id != ADMIN_WHITELIST: return
+        # Gọi hàm save cứng ổ đĩa đã viết hoàn thiện ở Phần 46
+        save_success = save_database_to_disk_storage()
+        if save_success:
+            bot.answer_callback_query(call.id, text="💾 Đã đồng bộ sao lưu file cứng an toàn thành công!", show_alert=True)
+        else:
+            bot.answer_callback_query(call.id, text="❌ Lỗi sao lưu! Hãy kiểm tra dung lượng ổ cứng VPS.", show_alert=True)
+
+    elif data == "adm_panel_close":
+        if user_id != ADMIN_WHITELIST and user_id not in OPERATORS: return
+        bot.answer_callback_query(call.id, text="Đã đóng bảng điều khiển an toàn.")
+        bot.edit_message_text("🔒 Bảng điều khiển Quản trị viên v8 đã được mã hóa đóng an toàn.", chat_id, message_id)
+
+# ==========================================
+# 136. BỔ SUNG CÁC NHÁNH PHÊ DUYỆT HOÁ ĐƠN VÀO CALLBACK CHÍNH
+# ==========================================
+# (Đoạn này bạn dán nối tiếp vào cấu trúc Callback tập trung ở Phần 6/19/48)
+
+    # 🏦 Nhánh Admin: Phê duyệt lệnh rút vàng "XÁC NHẬN ĐÃ BANK TIỀN" (Đối chiếu Phần 3)
+    elif data.startswith("tx_approve_"):
+        if user_id != ADMIN_WHITELIST: return
+        tx_id = data.replace("tx_approve_", "")
+        
+        # Kiểm tra sự tồn tại của mã giao dịch trong bộ nhớ tạm
+        if tx_id not in pending_transactions:
+            bot.answer_callback_query(call.id, text="❌ Mã lệnh giao dịch không tồn tại hoặc đã được xử lý trước đó!", show_alert=True)
+            return
+            
+        tx_data = pending_transactions[tx_id]
+        
+        if tx_data["status"] != "PENDING":
+            bot.answer_callback_query(call.id, text="⚠️ Giao dịch này đã được xử lý xong rồi!", show_alert=True)
+            return
+            
+        # Cập nhật trạng thái hoàn tất hóa đơn kế toán
+        tx_data["status"] = "SUCCESS"
+        target_user_id = tx_data["user_id"]
+        target_name = user_db.get(target_user_id, {}).get("name", f"User_{target_user_id}")
+        
+        bot.answer_callback_query(call.id, text="📌 Đã duyệt lệnh thành công! Đóng hòm file giao dịch.", show_alert=True)
+        
+        # 1. Cập nhật lại giao diện tin nhắn của Admin thành hóa đơn đã khóa sổ đẹp mắt
+        approved_admin_msg = (
+            f"✅ **HÓA ĐƠN ĐÃ ĐƯỢC PHÊ DUYỆT THÀNH CÔNG** ✅\n"
+            f"===================================\n"
+            f"👤 **Dũng sĩ nhận giải:** {target_name} (ID: `{target_user_id}`)\n"
+            f"🏦 **Thông tin tài khoản:** `{tx_data['info']}`\n"
+            f"💰 **Số tiền Admin đã bank:** `{tx_data['amount_vnd']:,} VNĐ`\n"
+            f"🪙 **Số vàng đã trừ:** `{tx_data['gold']:,} Vàng`\n"
+            f"-----------------------------------\n"
+            f"📌 **Trạng thái:** Lệnh rút tiền đã được thực thi chuyển khoản ngân hàng thật và đóng hồ sơ sổ sách kế toán v8 vào lúc `{time.strftime('%H:%M:%S')}`."
+        )
+        bot.edit_message_text(approved_admin_msg, chat_id, message_id, parse_mode="Markdown")
+        
+        # 2. Bắn biên lai chuyển khoản thành công trực tiếp cho dũng sĩ nhận giải
+        try:
+            receipt_user_text = (
+                f"🏦 **BIÊN LAI CHUYỂN KHOẢN THÀNH CÔNG** 🏦\n"
+                f"-----------------------------------------\n"
+                f"🎉 Xin chúc mừng dũng sĩ Làng Sói! Lệnh giải ngân phần thưởng của bạn đã được Admin phê duyệt đóng ấn.\n\n"
+                f"🆔 Mã giao dịch: `{tx_id}`\n"
+                f"🪙 Vàng tiêu thụ: `-{tx_data['gold']:,} Vàng`\n"
+                f"💵 Số tiền ngân hàng thực nhận: `+{tx_data['amount_vnd']:,} VNĐ`\n"
+                f"🏦 Tài khoản đích: `{tx_data['info']}`\n"
+                f"-----------------------------------------\n"
+                f"📈 **Trạng thái:** Tiền thật đã được chuyển thành công vào tài khoản ngân hàng của bạn. Vui lòng kiểm tra ứng dụng Mobile Banking của mình!"
+            )
+            bot.send_message(target_user_id, receipt_user_text, parse_mode="Markdown")
+        except Exception:
+            pass
+            
+        # Giải phóng giao dịch khỏi bộ nhớ đệm Cache tạm thời
+        del pending_transactions[tx_id]
+
+    # 🏦 Nhánh Admin: Hủy lệnh rút tiền và Hoàn lại vàng cho người chơi
+    elif data.startswith("tx_reject_"):
+        if user_id != ADMIN_WHITELIST: return
+        tx_id = data.replace("tx_reject_", "")
+        
+        if tx_id not in pending_transactions:
+            bot.answer_callback_query(call.id, text="❌ Lệnh giao dịch không tồn tại!", show_alert=True)
+            return
+            
+        tx_data = pending_transactions[tx_id]
+        target_user_id = tx_data["user_id"]
+        target_name = user_db.get(target_user_id, {}).get("name", f"User_{target_user_id}")
+        
+        # --- LOGIC HOÀN TIỀN: Trả lại số Vàng đóng băng về ví cho game thủ ---
+        user_db[target_user_id]["gold"] += tx_data["gold"]
+        
+        bot.answer_callback_query(call.id, text="❌ Đã từ chối lệnh! Hoàn trả tài sản.", show_alert=True)
+        
+        # 1. Cập nhật lại giao diện tin nhắn của Admin thành trạng thái hủy bỏ đơn
+        rejected_admin_msg = (
+            f"❌ **HÓA ĐƠN RÚT TIỀN BỊ TỪ CHỐI / HỦY BỎ** ❌\n"
+            f"===================================\n"
+            f"👤 **Người yêu cầu:** {target_name} (ID: `{target_user_id}`)\n"
+            f"💰 **Số tiền yêu cầu:** `{tx_data['amount_vnd']:,} VNĐ`\n"
+            f"-----------------------------------\n"
+            f"⚠️ **Hành động:** Admin đã từ chối lệnh rút này. Hệ thống đã tự động mở khóa giải đóng băng và hoàn trả đầy đủ `+{tx_data['gold']:,} Vàng` về tài khoản của người chơi."
+        )
+        bot.edit_message_text(rejected_admin_msg, chat_id, message_id, parse_mode="Markdown")
+        
+        # 2. Bắn thông báo cảnh báo hoàn tiền về cho người chơi biết lý do
+        try:
+            reject_user_text = (
+                f"⚠️ **THÔNG BÁO TỪ CHỐI GIAO DỊCH RÚT TIỀN** ⚠️\n"
+                f"-----------------------------------------\n"
+                f"🆔 Lệnh giao dịch mã số `{tx_id}` của bạn đã bị Ban Quản Trị từ chối phê duyệt.\n\n"
+                f"💰 **Số Vàng hoàn lại:** `+{tx_data['gold']:,} Vàng` (Đã cộng trả lại vào số dư khả dụng).\n"
+                f"📌 *Lý do thường gặp:* Thông tin số tài khoản sai định dạng, dính nghi vấn clone ip trục lợi điểm thưởng, hoặc tài khoản ngân hàng không hợp lệ.\n"
+                f"-----------------------------------------\n"
+                f"💬 *Vui lòng kiểm tra kỹ lại thông tin và thực hiện tạo lệnh rút mới chính xác tại Cổng Ngân Hàng!*"
+            )
+            bot.send_message(target_user_id, reject_user_text, parse_mode="Markdown")
+        except Exception:
+            pass
+            
+        # Giải phóng giao dịch khỏi bộ nhớ đệm Cache tạm thời
+        del pending_transactions[tx_id]
+
+# ==========================================
+# 137. THUẬT TOÁN KEEPALIVE WATCHDOG VÒNG LẶP VÔ HẠN
+# ==========================================
+def run_bot_with_keep_alive_watchdog():
+    """
+    Bộ não vận hành tối cao: Chạy bot bằng cấu trúc vòng lặp bất tử.
+    Bắt toàn bộ các lỗi ngoại lệ hệ thống và tự động kết nối lại sau 5 giây.
+    """
+    print("==================================================")
+    print("🚀 HỆ THỐNG WATCHDOG CHỐNG SẬP v8 ĐÃ KÍCH HOẠT")
+    print("==================================================")
+    
+    # 1. Nạp lại toàn bộ tài sản, level của người chơi từ file cứng cũ vào RAM (Phần 46)
+    load_database_from_disk_storage()
+    
+    # 2. Kích hoạt luồng ngầm tự động sao lưu dữ liệu sau mỗi 5 phút một lần (Phần 46)
+    start_auto_backup_daemon_thread(interval_seconds=300)
+    
+    # 3. Kích hoạt luồng ngầm tự động quét và giải phóng phòng rác treo AFK (Phần 47)
+    # (Đoạn này bạn chèn thêm hàm start_afk_sweeper_thread nếu đã cấu hình ở Phần 47)
+    
+    print("🤖 Bot Ma Sói v8 Nâng Cao chính thức bước vào trạng thái trực tuyến...")
+    
+    # Vòng lặp bất tử giám sát xung đột hệ thống
+    while True:
+        try:
+            # Xóa sạch toàn bộ Webhook cũ còn kẹt trên Server Telegram để tránh xung đột dữ liệu Long Polling
+            bot.remove_webhook()
+            
+            # Kích hoạt chế độ nhận tin nhắn liên tục với các tham số tối ưu hóa:
+            # - timeout: 60 giây giữ kết nối cổng đọc tin nhắn mượt mà
+            # - long_polling_timeout: 60 giây chống mất gói tin mạng
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+            
+        except Exception as e:
+            # Ghi vết chi tiết lỗi crash khẩn cấp ra terminal máy chủ để tiện debug
+            print(f"\n🚨 [CRASH DETECTED] Phát hiện sự cố sập luồng mạng: {str(e)}")
+            print("⏳ [WATCHDOG EVENT] Hệ thống tự động kích hoạt lệnh hồi sinh. Đang kết nối lại sau 5 giây...")
+            
+            # Cơ chế cách ly chống dội bom gói tin (Anti-Flood Sleep) tránh bị Telegram khóa IP chặn Bot
+            time.sleep(5)
+            print("🔄 [WATCHDOG] Đang khởi động lại cổng kết nối Telegram API...\n")
+
+# ==========================================
+# 138. ĐIỂM KHỞI CHẠY CHÍNH CỦA TOÀN BỘ FILE CODE
+# ==========================================
+if __name__ == "__main__":
+    # Ra lệnh cho Watchdog độc lập quản lý vận hành toàn bộ vòng đời của bot
+    run_bot_with_keep_alive_watchdog()
