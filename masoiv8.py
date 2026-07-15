@@ -610,16 +610,48 @@ def cmd_ban_ip_manual(message):
 # ==========================================
 # 16. BỘ XỬ LÝ SỰ KIỆN CALLBACK TẬP TRUNG
 # ==========================================
+# --- ĐOẠN CODE GOM TẤT CẢ CALLBACK Ở PHẦN 6 ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_global_callbacks(call):
-    """
-    Bộ định tuyến (Router) xử lý toàn bộ hành động click nút bấm của người chơi.
-    Tích hợp Middleware kiểm tra trạng thái bảo trì và xác thực tài khoản.
-    """
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     message_id = call.message.message_id
     data = call.data
+
+    # Các lệnh gốc của Phần 6...
+    if data == "lobby_back_main":
+        pass 
+    elif data == "lobby_profile":
+        pass
+        
+    # 📥 ĐỒNG BỘ: Dán các khối elif của các phần sau nối đuôi nhau vào đây
+    elif data.startswith("shop_buy_"):      # Lệnh mua đồ ở Phần 6
+        pass
+    elif data.startswith("room_init_"):     # Lệnh chọn mức cược ở Phần 7
+        pass
+    elif data.startswith("room_action_"):   # Lệnh Sẵn sàng/Rời phòng ở Phần 8
+        pass
+    elif data.startswith("skill_see_"):     # Lệnh Tiên tri soi ở Phần 12
+        pass
+    elif data.startswith("wolf_bite_"):     # Lệnh Sói cắn ở Phần 13
+        pass
+    elif data.startswith("witch_save_"):    # Lệnh Phù thủy cứu ở Phần 14
+        pass
+    elif data.startswith("skill_nominate_"): # Lệnh tố giác ban ngày ở Phần 17
+        pass
+    elif data.startswith("judge_yes_") or data.startswith("judge_no_"): # Lệnh vote tối hậu Phần 19
+        pass
+    elif data.startswith("skill_idol_"):    # Lệnh Bán Sói chọn Idol ở Phần 25
+        pass
+    elif data.startswith("ww_kill_"):       # Lệnh Sói Gió cắn trộm ở Phần 27
+        pass
+    elif data.startswith("p2p_yes_"):       # Lệnh xác nhận chuyển tiền ở Phần 30
+        pass
+    elif data.startswith("wheel_action_"):  # Lệnh Vòng quay may mắn ở Phần 43
+        pass
+    elif data.startswith("tx_approve_") or data.startswith("tx_reject_"): # Lệnh Admin duyệt tiền Phần 49
+        pass
+
 
     # Bước 1: Chặn đứng tương tác nếu hệ thống đang bật chế độ bảo trì (Phần 5)
     if MAINTENANCE_MODE and not is_admin(user_id):
