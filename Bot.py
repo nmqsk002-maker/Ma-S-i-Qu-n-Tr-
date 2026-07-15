@@ -1,221 +1,142 @@
 # ==========================================
-# PHẦN 22: HỆ THỐNG PHẦN THƯỞNG, EXP, CẤP ĐỘ & KẾT THÚC GAME
+# PHẦN 16: HỆ THỐNG THẢO LUẬN BAN NGÀY & KÍCH HOẠT LÁ BÀI SỰ KIỆN
 # ==========================================
 
-def add_exp_and_check_level_up(user_id, exp_gain):
-    """Cộng điểm kinh nghiệm cho người chơi và tự động kích hoạt hiệu ứng lên cấp"""
-    user_data = user_db[user_id]
-    user_data["exp"] += exp_gain
-    
-    # Công thức tính EXP yêu cầu để lên cấp: Level * 100
-    next_level_exp = user_data["level"] * 100
-    
-    level_up_occurred = False
-    while user_data["exp"] >= next_level_exp:
-        user_data["exp"] -= next_level_exp
-        user_data["level"] += 1
-        next_level_exp = user_data["level"] * 100
-        level_up_occurred = True
-        
-    return level_up_occurred
+# Định nghĩa Pool thời tiết và các lá bài sự kiện tác động ban ngày
+WEATHER_DAY_POOL = {
+    "Đẹp Trời": {"icon": "☀️", "time_mod": 1.0, "desc": "Thời tiết lý tưởng. Thời gian thảo luận giữ nguyên chuẩn định mức."},
+    "Ngày Mưa Bão": {"icon": "⛈️", "time_mod": 0.5, "desc": "Sấm sét vang trời khiến dân làng hoang mang. Thời gian thảo luận bị rút ngắn 50%!"},
+    "Ngày Nắng Hạn": {"icon": "🥵", "time_mod": 1.0, "desc": "Không khí oi bức. Ai dùng kỹ năng đêm qua sẽ bị cấm chat trong 20 giây đầu tiên để hồi sức."}
+}
 
-def process_end_of_game_rewards(room_id, winning_team):
+EVENT_CARDS_POOL = [
+    {"id": "binh_thuong", "name": "🕊️ Bình Yên", "desc": "Không có sự kiện đặc biệt nào xảy ra trong làng."},
+    {"id": "dich_benh", "name": "🦠 Dịch Bệnh", "desc": "Khóa mõm (Mute) ngẫu nhiên 1 người chơi bất kỳ trong làng, họ không thể chat trong ngày hôm nay."},
+    {"id": "toa_an", "name": "⚖️ Tòa Án Lương Tâm", "desc": "Ngày hôm nay toàn bộ phiếu bầu khởi tố treo cổ sẽ hiển thị công khai danh tính rõ ràng."}
+]
+
+# Bộ nhớ tạm lưu danh sách người chơi bị khóa mõm (Mute) trong ngày của từng phòng chơi
+muted_players_today = {}
+
+def start_day_discussion_phase(room_id):
     """
-    Hàm kết thúc trận đấu:
-    - Quyết toán tiền đặt cược của các linh hồn khán giả (Phần 45).
-    - Tự động in Nhật ký diễn biến trận đấu ra sảnh chat tổng (Phần 28).
-    - Trả tự do, mở lại quyền chat Group cho tất cả mọi người (Phần 41).
-    - Đóng gói dữ liệu xuất file JSON lưu cứng lên VPS (Phần 42).
-    - Chia đều tổng quỹ cược Vàng và cộng EXP thăng cấp cho những người thắng cuộc.
-    - Cuối hàm, quét tự động lật mở Thành Tựu thưởng Vàng lớn (Phần 40).
+    Khởi động giai đoạn thảo luận công khai ban ngày.
+    Tính toán thời tiết, rút lá bài sự kiện và thiết lập bộ đếm thời gian.
     """
-    if room_id not in game_rooms:
+    if room_id not in game_rooms or game_rooms[room_id]["status"] != "Day":
         return
         
     room_data = game_rooms[room_id]
-    room_data["status"] = "End"
+    room_data["status"] = "Discussion"
+    muted_players_today[room_id] = set()
     
-    # 📥 ĐỒNG BỘ PHẦN 45: Tự động quyết toán hóa đơn đặt cược của các linh hồn khán giả
-    if 'settle_spectator_betting_rewards' in globals():
-        settle_spectator_betting_rewards(room_id, winning_team)
+    # 1. Cấu hình hiệu ứng Thời tiết ban ngày
+    weather_key = random.choice(list(WEATHER_DAY_POOL.keys()))
+    weather_info = WEATHER_DAY_POOL[weather_key]
     
-    # 📥 ĐỒNG BỘ PHẦN 28: Tự động xuất nhật ký trận đấu ra màn hình cho người chơi xem trước khi phòng bị xóa
-    if 'generate_and_send_game_log' in globals():
-        generate_and_send_game_log(room_id)
-        
-    # 📥 ĐỒNG BỘ PHẦN 41: Trả lại tự do hoàn toàn cho toàn bộ thành viên (sống + chết) khi trận đấu kết thúc
-    if 'lift_all_restrictions_on_game_over' in globals():
-        # Giả lập biến nhóm chat chat_id nếu bạn chạy qua phòng chat tổng, mặc định gộp theo host
-        lift_all_restrictions_on_game_over(room_id, room_data["host"])
-        
-    # 📥 ĐỒNG BỘ PHẦN 42: Đóng gói dữ liệu xuất file JSON lịch sử trận đấu lưu cứng lên ổ đĩa
-    if 'save_match_history_to_storage' in globals():
-        save_match_history_to_storage(room_id)
+    # 2. Rút Lá bài Sự kiện ngẫu nhiên ban ngày
+    event_card = random.choice(EVENT_CARDS_POOL)
+    room_data["event_card"] = event_card["id"]
+    
+    # Tính toán thời gian thảo luận gốc là 90 giây nhân với hệ số thời tiết
+    discussion_time = int(90 * weather_info["time_mod"])
+    
+    # Xử lý hiệu ứng Lá bài Sự kiện: Dịch Bệnh (Mute 1 người ngẫu nhiên)
+    muted_text = ""
+    if event_card["id"] == "dich_benh" and room_data["alive"]:
+        lucky_victim = random.choice(room_data["alive"])
+        muted_players_today[room_id].add(lucky_victim)
+        muted_text = f"🚨 **Cách ly y tế:** **{user_db[lucky_victim]['name']}** dính vi-rút bệnh lạ, bị **KHÓA MÕM (MUTE)** hoàn toàn trong ngày hôm nay!\n"
 
-    total_players = len(room_data["players"])
-    bet_fee = room_data["bet"]
-    total_prize_pool = total_players * bet_fee
+    # Xử lý hiệu ứng Thời tiết: Ngày Nắng Hạn (Mute tạm thời những người dùng chiêu đêm qua)
+    if weather_key == "Ngày Nắng Hạn":
+        for pid in room_data["alive"]:
+            if room_data["roles"][pid].get("used_skill_last_night"): 
+                muted_players_today[room_id].add(pid)
     
-    winners = []
-    losers = []
-    
-    for pid in room_data["players"]:
-        pdata = room_data["roles"][pid]
-        if pdata["team"] == winning_team:
-            winners.append(pid)
-        else:
-            losers.append(pid)
-            
-    # Thuật toán phân chia tiền vàng thưởng tích hợp Sự Kiện Giờ Vàng (Phần 33)
-    gold_reward_per_winner = 0
-    multiplier_text = ""
-    if winners:
-        base_reward = int(total_prize_pool / len(winners))
-        # Kiểm tra xem có đang bật sự kiện Giờ Vàng X2 không (Phần 33)
-        if globals().get("IS_DOUBLE_GOLD_EVENT", False):
-            gold_reward_per_winner = base_reward * 2
-            multiplier_text = " 🔥 *(Đã nhân đôi X2 Giờ Vàng)*"
-        else:
-            gold_reward_per_winner = base_reward
-            
-        for w_id in winners:
-            user_db[w_id]["gold"] += gold_reward_per_winner
-            user_db[w_id]["win"] += 1
-            
-    for l_id in losers:
-        user_db[l_id]["lose"] += 1
-
-    end_game_msg = (
-        f"👑 **TRẬN ĐẤU KẾT THÚC — PHE {winning_team.upper()} CHIẾN THẮNG** 👑\n"
+    # 3. Tạo văn bản thông báo sự kiện ban ngày đầy kịch tính
+    discussion_msg = (
+        f"📣 **GIAI ĐOẠN THẢO LUẬN CHÍNH THỨC** 📣\n"
         f"-----------------------------------------\n"
-        f"💰 **Tổng quỹ cược trận đấu:** `{total_prize_pool:,} Vàng`\n"
-        f"🎁 **Phần thưởng mỗi người thắng:** `+{gold_reward_per_winner:,} Vàng`{multiplier_text}\n"
+        f"{weather_info['icon']} **Thời tiết hôm nay:** `{weather_key}`\n"
+        f"ℹ️ *Tác động:* _{weather_info['desc']}_\n\n"
+        f"🃏 **Lá bài Sự kiện rút được:** **{event_card['name']}**\n"
+        f"ℹ️ *Chi tiết:* _{event_card['desc']}_\n"
         f"-----------------------------------------\n"
-        f"🏆 **DANH SÁCH ANH HÙNG CHIẾN THẮNG ({winning_team}):**\n"
+        f"{muted_text}"
+        f"⏳ **Thời gian đếm ngược thảo luận:** `{discussion_time} giây`\n\n"
+        f"💬 *Toàn bộ thành viên còn sống hãy tích cực nhắn tin tranh luận để tìm ra kịch sĩ ẩn danh!*"
     )
     
-    for w_id in winners:
-        pname = user_db[w_id]["name"]
-        prole = room_data["roles"][w_id]["role"]
-        level_up = add_exp_and_check_level_up(w_id, 50) # Thắng trận nhận ngay 50 EXP gốc
-        lvl_up_text = " 🔥 **LEVEL UP!**" if level_up else ""
-        end_game_msg += f"🔹 **{pname}** (Vai trò: `{prole}`){lvl_up_text}\n"
-        
-        # Cập nhật tiến độ nhiệm vụ hàng ngày 'Thắng 1 trận' (Phần 35)
-        if 'update_quest_progress' in globals():
-            update_quest_progress(w_id, "q2")
-        
-    end_game_msg += "\n💀 **DANH SÁCH BẠI TRẬN ĐÁNG TIẾC:**\n"
-    for l_id in losers:
-        pname = user_db[l_id]["name"]
-        prole = room_data["roles"][l_id]["role"]
-        level_up = add_exp_and_check_level_up(l_id, 15) # Thua trận nhận khích lệ 15 EXP gốc
-        lvl_up_text = " 🔥 **LEVEL UP!**" if level_up else ""
-        end_game_msg += f"🔸 **{pname}** (Vai trò: `{prole}`){lvl_up_text}\n"
-        
-    end_game_msg += (
-        f"-----------------------------------------\n"
-        f"💬 *Phòng chơi sẽ tự động đóng lại sau vài giây. Hãy sử dụng nút Quay Lại để tiếp tục tìm trận mới!*"
-    )
-
+    # Phát sóng thông báo và mở luồng đếm ngược
     for pid in room_data["players"]:
-        try: bot.send_message(pid, end_game_msg, parse_mode="Markdown")
-        except Exception: pass
+        try:
+            bot.send_message(pid, discussion_msg, parse_mode="Markdown")
+        except Exception: 
+            pass
         
-        # Cập nhật tiến độ nhiệm vụ hàng ngày 'Tham gia 2 trận' (Phần 35) cho tất cả mọi người
-        if 'update_quest_progress' in globals():
-            update_quest_progress(pid, "q1")
-            
-    room_data["history_log"].append(f"👑 Trận đấu kết thúc. Phe {winning_team} thắng.")
+    room_data["history_log"].append(f"☀️ Thảo luận ngày mở. Thời tiết: {weather_key}, Sự kiện: {event_card['name']}")
+    
+    # Khởi chạy luồng hẹn giờ đếm ngược đóng cổng chat thảo luận ban ngày
+    threading.Thread(target=countdown_discussion_timer, args=(room_id, discussion_time)).start()
 
-    # 📥 ĐỒNG BỘ PHẦN 40: Cuối trận, tự động quét mở khóa Thành Tựu thưởng Vàng lớn cho người chơi
-    if 'scan_and_unlock_user_achievements' in globals():
-        for pid in room_data["players"]:
-            scan_and_unlock_user_achievements(pid)
-
-    # Giải phóng phòng chơi khỏi bộ nhớ RAM sau 5 giây delay
-    def delayed_cleanup():
-        time.sleep(5)
-        if room_id in game_rooms:
-            del game_rooms[room_id]
-            
-    threading.Thread(target=delayed_cleanup).start()
-
+def countdown_discussion_timer(room_id, seconds):
+    """Luồng đếm ngược thời gian thảo luận ban ngày"""
+    time.sleep(seconds)
+    if room_id in game_rooms and game_rooms[room_id]["status"] == "Discussion":
+        # Hết giờ thảo luận, cưỡng chế đóng cổng chat tổng và chuyển sang giai đoạn Tố Giác Treo Cổ (Phần 17)
+        if 'start_voting_nomination_phase' in globals():
+            start_voting_nomination_phase(room_id)
 
 # ==========================================
-# PHẦN 23: TÍNH NĂNG THẦN TÌNH YÊU (CUPID) & LOGIC CHẾT CHÙM VÌ TÌNH
+# MIDDLEWARE KIỂM SOÁT VÀ PHÒNG CHỐNG CHAT TRỘM TRONG GROUP
 # ==========================================
-
-# Bộ nhớ tạm lưu trữ danh sách Cặp Đôi của từng phòng chơi: { room_id: {"lovers": set([id1, id2]), "cupid_id": id} }
-lovers_cache = {}
-
-def get_cupid_selection_markup(room_id, cupid_id, selected_p1=None):
-    """Tạo menu nút bấm chọn mục tiêu kết đôi cho Cupid"""
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    room_data = game_rooms[room_id]
+@bot.message_handler(func=lambda message: True)
+def handle_group_chat_filter(message):
+    """
+    Bộ lọc kiểm tra tin nhắn chat tổng: 
+    - Chặn đứng hành vi chat của người chết.
+    - Chặn đứng hành vi chat của người bị dính hiệu ứng Mute (Dịch bệnh/Thời tiết).
+    - Chặn đứng hành vi chat của mọi người trừ nghi phạm khi đang trong giai đoạn Biện hộ.
+    """
+    user_id = message.from_user.id
+    chat_id = message.chat.id
     
-    for pid in room_data["players"]:
-        if selected_p1 and pid == selected_p1:
-            continue
-            
-        pname = user_db[pid]["name"]
-        if not selected_p1:
-            cb_data = f"cupid_p1_{room_id}_{pid}"
-            btn_text = f"👤 {pname}"
-        else:
-            cb_data = f"cupid_p2_{room_id}_{selected_p1}_{pid}"
-            btn_text = f"💘 Ghép với {pname}"
-            
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=cb_data))
-        
-    return markup
-
-def trigger_cupid_menu(room_id):
-    """Hàm tìm kiếm Cupid trong phòng để gửi bảng menu bắn mũi tên tình yêu"""
-    room_data = game_rooms[room_id]
-    cupid_id = None
-    
-    for pid in room_data["players"]:
-        if room_data["roles"][pid]["role"] == "Thần Tình Yêu (Cupid)":
-            cupid_id = pid
+    # Tìm xem người chơi này đang thuộc phòng game nào
+    active_room_id = None
+    for rid, rdata in game_rooms.items():
+        if user_id in rdata["players"]:
+            active_room_id = rid
             break
             
-    if not cupid_id:
-        return
+    if active_room_id:
+        room_data = game_rooms[active_room_id]
         
-    cupid_text = (
-        "🏹 **MŨI TÊN TÌNH YÊU CUPID KÍCH HOẠT** 🏹\n"
-        "-----------------------------------------\n"
-        "💘 Là Thần Tình Yêu, bạn có nhiệm vụ ghép đôi cho 2 người chơi bất kỳ trong làng trước khi cuộc chiến bắt đầu.\n\n"
-        "👉 **Bước 1:** Hãy lựa chọn **Người thứ nhất** để ban phát tình yêu từ danh sách dưới đây:"
-    )
-    bot.send_message(cupid_id, cupid_text, parse_mode="Markdown", reply_markup=get_cupid_selection_markup(room_id, cupid_id))
+        # 1. Chặn người chơi đã chết chat vào sảnh khi game đang chạy
+        if room_data["status"] in ["Night", "Day", "Discussion", "Vote_Nomination", "Stage_Defense", "Final_Judgment"] and user_id not in room_data["alive"]:
+            try:
+                bot.delete_message(chat_id, message.message_id)
+                bot.send_message(user_id, "👻 Bạn đã chết, vui lòng giữ linh hồn lặng im không được phím chiến phá bĩnh trò chơi!")
+            except Exception: 
+                pass
+            return
+            
+        # 2. Chặn người chơi đang bị dính án phạt Mute từ Sự kiện thời tiết hoặc bài dịch bệnh
+        if room_data["status"] == "Discussion" and user_id in muted_players_today.get(active_room_id, set()):
+            try:
+                bot.delete_message(chat_id, message.message_id)
+                bot.send_message(user_id, "🔇 Bạn đang trong trạng thái bị khóa mõm cấm ngôn luận, không thể gửi tin nhắn chat tổng lúc này!")
+            except Exception: 
+                pass
+            return
 
-def apply_lovers_heartbreak_death(room_id, current_dead_set):
-    """
-    Hàm bổ trợ quét dây chuyền tình ái.
-    Nếu phát hiện 1 trong 2 người yêu dính trong danh sách chết, cưỡng chế gạt người còn lại chết cùng.
-    """
-    if room_id not in lovers_cache:
-        return current_dead_set
-        
-    room_lovers = lovers_cache[room_id]["lovers"]
-    room_data = game_rooms[room_id]
-    
-    lovers_list = list(room_lovers)
-    if len(lovers_list) < 2:
-        return current_dead_set
-        
-    p1, p2 = lovers_list[0], lovers_list[1]
-    
-    # Tình huống 1: Người thứ 1 chết, lôi theo người thứ 2
-    if p1 in current_dead_set and p2 in room_data["alive"]:
-        current_dead_set.add(p2)
-        room_data["history_log"].append(f"💖 {user_db[p2]['name']} đã tự sát vì đau buồn khi người tình {user_db[p1]['name']} hy sinh.")
-        
-    # Tình huống 2: Người thứ 2 chết, lôi theo người thứ 1
-    elif p2 in current_dead_set and p1 in room_data["alive"]:
-        current_dead_set.add(p1)
-        room_data["history_log"].append(f"💖 {user_db[p1]['name']} đã tự sát vì đau buồn khi người tình {user_db[p2]['name']} hy sinh.")
-        
-    return current_dead_set
+        # 3. Đồng bộ Phần 18: Nếu đang trong giai đoạn Biện hộ, chặn chat tất cả mọi người trừ Nghi phạm trên bục
+        if room_data["status"] == "Stage_Defense":
+            suspect_id = globals().get("current_suspect_on_stage", {}).get(active_room_id)
+            if user_id != suspect_id:
+                try:
+                    bot.delete_message(chat_id, message.message_id)
+                    bot.send_message(user_id, "🔇 Làng đang trong giờ thi hành lệnh giữ trật tự! Hãy để nghi phạm thực hiện quyền biện hộ duy nhất trên bục lúc này.")
+                except Exception: 
+                    pass
+                return
