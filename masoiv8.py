@@ -2554,16 +2554,22 @@ def add_exp_and_check_level_up(user_id, exp_gain):
 # ==========================================
 # 59. HÀM TỔNG KẾT TRẬN ĐẤU & PHÂN PHÁT QUỸ VÀNG (REWARDS SYSTEM)
 # ==========================================
+# --- ĐOẠN CODE ĐỒNG BỘ ĐẦU HÀM Ở PHẦN 22 ---
 def process_end_of_game_rewards(room_id, winning_team):
-    """
-    Hàm kết thúc trận đấu:
-    - Thu thập toàn bộ tiền cược trong phòng chơi.
-    - Xác định danh sách người chiến thắng theo phe (winning_team).
-    - Cộng tiền thưởng Vàng, cộng EXP, cập nhật tỷ lệ Win/Lose vào user_db.
-    - Giải tán phòng chơi, đưa tất cả thành viên về trạng thái Sảnh chờ.
-    """
     if room_id not in game_rooms:
         return
+        
+    # 📥 ĐỒNG BỘ 1: Tự động quyết toán tiền đặt cược dự đoán cho khán giả linh hồn (Phần 45)
+    settle_spectator_betting_rewards(room_id, winning_team)
+    
+    # 📥 ĐỒNG BỘ 2: Tự động in Nhật ký diễn biến trận đấu ra sảnh chat tổng (Phần 28)
+    generate_and_send_game_log(room_id)
+    
+    # 📥 ĐỒNG BỘ 3: Trả tự do, mở lại quyền chat Group cho tất cả mọi người (Phần 41)
+    # lift_all_restrictions_on_game_over(room_id, group_chat_id)
+    
+    # 📥 ĐỒNG BỘ 4: Đóng gói dữ liệu xuất file JSON lưu cứng lên VPS (Phần 42)
+    save_match_history_to_storage(room_id)
         
     room_data = game_rooms[room_id]
     room_data["status"] = "End"
@@ -2630,6 +2636,9 @@ def process_end_of_game_rewards(room_id, winning_team):
         f"-----------------------------------------\n"
         f"💬 *Phòng chơi sẽ tự động đóng lại sau vài giây. Toàn bộ người chơi hãy sử dụng lệnh `/menu` hoặc nút Quay Lại để tiếp tục tìm trận mới!*"
     )
+      # 📥 ĐỒNG BỘ 5: Cuối hàm, quét tự động lật mở Thành Tựu thưởng Vàng lớn cho người chơi (Phần 40)
+    for pid in game_rooms[room_id]["players"]:
+        scan_and_unlock_user_achievements(pid)
 
     # Phát sóng bảng vàng vinh danh cho mọi người chơi trong phòng cược
     for pid in room_data["players"]:
