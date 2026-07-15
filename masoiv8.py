@@ -1692,34 +1692,33 @@ def trigger_witch_menu(room_id, victim_id):
 # ==========================================
 # 40. HÀM TỔNG KẾT KẾT QUẢ DIỄN BIẾN BAN ĐÊM
 # ==========================================
+# --- ĐOẠN CODE SAU KHI CHÈN THÊM VÀO PHẦN 15 ---
 def process_end_of_night(room_id):
     """
-    Hàm xử lý thuật toán hợp nhất dữ liệu ban đêm:
-    - Tìm mục tiêu bị Sói cắn nhiều phiếu nhất.
-    - Đối chiếu kết giới Bảo Vệ và Bình Sinh của Phù Thủy.
-    - Áp dụng Bình Tử của Phù Thủy và hiệu ứng Sói Nguyền.
-    - Cập nhật danh sách người chết và chuyển trạng thái sang Ban Ngày.
+    Hàm bộ não trung tâm tổng kết diễn biến ban đêm (Đã đồng bộ nâng cao v8):
+    - Đếm phiếu Sói cắn và đối chiếu Khiên Già Làng (Phần 24)
+    - Đối chiếu kết giới Bảo Vệ (Phần 12) & Thuốc Phù Thủy (Phần 14)
+    - Kích hoạt kỹ năng khẩn cấp của Thợ Săn Đêm (Phần 36)
+    - Quét sát thương cắn trộm của Ma Sói Gió (Phần 27)
+    - Xử lý dây chuyền chết chùm vì tình yêu của Cupid (Phần 23)
+    - Khai tử, dọn dẹp bộ nhớ đệm và thức tỉnh Bán Sói (Phần 25)
     """
     if room_id not in game_rooms or game_rooms[room_id]["status"] != "Night":
         return
         
     room_data = game_rooms[room_id]
-    
-    # Danh sách lưu trữ những người chơi sẽ phải nằm xuống trong đêm nay
-    dead_this_night = set()
+    dead_this_night = set()  # Danh sách những người sẽ phải chết đêm nay
     
     # --------------------------------------------------
-    # BƯỚC 1: XỬ LÝ PHIẾU CẮN CỦA BẦY MA SÓI (Phần 13)
+    # BƯỚC 1: LẤY DỮ LIỆU PHIẾU CẮN CỦA BẦY MA SÓI (Phần 13)
     # --------------------------------------------------
     room_wolf_votes = wolf_votes_cache.get(room_id, {})
     wolf_victim = None
-    
     if room_wolf_votes:
-        # Tìm người có tổng trọng số phiếu bầu cao nhất
-        wolf_victim = max(room_wolf_votes, key=room_wolf_votes.get)
+        wolf_victim = max(room_wolf_votes, key=room_wolf_votes.get) # Tìm kẻ bị cắn nhiều phiếu nhất
         
     # --------------------------------------------------
-    # BƯỚC 2: ĐỐI CHIẾU KẾT GIỚI BẢO VỆ (Phần 12)
+    # BƯỚC 2: THU THẬP DANH SÁCH ĐƯỢC BẢO VỆ & PHÙ THỦY CỨU/GIẾT
     # --------------------------------------------------
     protected_targets = set()
     for pid in room_data["alive"]:
@@ -1727,12 +1726,8 @@ def process_end_of_night(room_id):
         if paction and paction.get("action") == "guard":
             protected_targets.add(paction["target"])
             
-    # --------------------------------------------------
-    # BƯỚC 3: ĐỐI CHIẾU ĐỘC DƯỢC CỦA PHÙ THỦY (Phần 14)
-    # --------------------------------------------------
     witch_save_target = None
     witch_kill_target = None
-    
     for pid in room_data["alive"]:
         if room_data["roles"][pid]["role"] == "Phù Thủy":
             witch_save_target = room_data["roles"][pid].get("night_action_witch_save")
@@ -1740,96 +1735,119 @@ def process_end_of_night(room_id):
             break
 
     # --------------------------------------------------
-    # BƯỚC 4: THUẬT TOÁN TÍNH TOÁN SỐNG / CHẾT LÕI
+    # BƯỚC 3: ĐỐI CHIẾU LOGIC SỐNG CHẾT & LỒNG CÁC ĐỘT BIẾN (KÝ KIỂU 3)
     # --------------------------------------------------
-    # Tình huống A: Có nạn nhân bị Sói nhắm trúng
+    # Tình huống A: Xử lý nạn nhân bị bầy Ma Sói tấn công
     if wolf_victim:
-        # Nếu nạn nhân được Bảo Vệ che chở HOẶC được Phù Thủy đổ Bình Sinh cứu mạng
-        if wolf_victim in protected_targets or wolf_victim == witch_save_target:
-            # Đặc biệt: Nếu Đêm Trăng Rằm, Sói phá vỡ lớp khiên Bảo Vệ thường (Phần 11)
-            if room_data["weather"] == "Đêm Trăng Rằm" and wolf_victim in protected_targets and wolf_victim != witch_save_target:
-                dead_this_night.add(wolf_victim)
-                room_data["history_log"].append(f"🩸 {user_db[wolf_victim]['name']} bị Sói cắn chết xuyên khiên Bảo Vệ do Đêm Trăng Rằm.")
-            else:
-                room_data["history_log"].append(f"🛡️ {user_db[wolf_victim]['name']} đã được cứu sống an toàn trong đêm.")
+        # LỒNG ĐỒNG BỘ PHẦN 24: Kiểm tra Lá chắn sinh mệnh của Già Làng trước khi chết
+        is_elder_saved = False
+        if room_data["roles"][wolf_victim]["role"] == "Già Làng":
+            # Hàm apply_elder_night_shield (Phần 24) trả về True nếu Già Làng còn mạng 1
+            is_elder_saved = apply_elder_night_shield(room_id, wolf_victim)
+            
+        if is_elder_saved:
+            # Nếu Già Làng đỡ được mạng, bầy Sói cắn thất bại đêm nay
+            room_data["history_log"].append(f"🛡️ Già Làng {user_db[wolf_victim]['name']} tiêu hao mạng 1, bảo vệ thành công bản thân.")
         else:
-            # Không có bảo hộ, nạn nhân tử vong
-            dead_this_night.add(wolf_victim)
-            room_data["history_log"].append(f"💀 {user_db[wolf_victim]['name']} đã bị bầy Sói phân xác.")
+            # Nếu không phải Già Làng, hoặc Già Làng đã hết mạng bảo hộ
+            if wolf_victim in protected_targets or wolf_victim == witch_save_target:
+                # Đặc biệt: Nếu Đêm Trăng Rằm (Phần 11), Sói cắn xuyên qua lớp khiên Bảo Vệ thường
+                if room_data["weather"] == "Đêm Trăng Rằm" and wolf_victim in protected_targets and wolf_victim != witch_save_target:
+                    dead_this_night.add(wolf_victim)
+                    room_data["history_log"].append(f"🩸 {user_db[wolf_victim]['name']} bị Sói cắn chết xuyên khiên Bảo Vệ do Đêm Trăng Rằm.")
+                else:
+                    room_data["history_log"].append(f"🛡️ {user_db[wolf_victim]['name']} đã được Bảo vệ/Phù thủy cứu sống kỳ tích.")
+            else:
+                # Nạn nhân chính thức tử vong vì Sói cắn
+                dead_this_night.add(wolf_victim)
+                room_data["history_log"].append(f"💀 {user_db[wolf_victim]['name']} đã bị bầy Ma Sói cắn chết phân xác.")
+                
+                # LỒNG ĐỒNG BỘ PHẦN 36: Đột biến Thợ Săn Đêm bắn súng trả thù khẩn cấp trước khi chết
+                check_and_trigger_night_hunter_skill(room_id, wolf_victim)
 
-    # Tình huống B: Phù Thủy ném bình thuốc độc chết người
+    # Tình huống B: Xử lý mục tiêu bị Phù Thủy ném bình thuốc độc
     if witch_kill_target and witch_kill_target != "BLOCKED_BY_AMULET":
         dead_this_night.add(witch_kill_target)
-        room_data["history_log"].append(f"🧪 {user_db[witch_kill_target]['name']} đã chết do nhiễm độc độc dược.")
+        room_data["history_log"].append(f"🧪 {user_db[witch_kill_target]['name']} đã chết do dính độc dược Phù Thủy.")
+        
+        # LỒNG ĐỒNG BỘ PHẦN 24: Nếu Phù Thủy ném độc chết nhầm Già Làng -> Phạt tước kỹ năng cả làng
+        if room_data["roles"][witch_kill_target]["role"] == "Già Làng":
+            trigger_elder_punishment_curse(room_id, "Thuốc Độc Phù Thủy")
+
+    # LỒNG ĐỒNG BỘ PHẦN 27: Gom thêm mục tiêu bị Ma Sói Gió cắn trộm âm thầm vào danh sách chết
+    dead_this_night = apply_white_wolf_kill_result(room_id, dead_this_night)
+
+    # LỒNG ĐỒNG BỘ PHẦN 23: Áp dụng logic chết chùm dây chuyền vì tình yêu của Cupid
+    dead_this_night = apply_lovers_heartbreak_death(room_id, dead_this_night)
 
     # --------------------------------------------------
-    # BƯỚC 5: XỬ LÝ HUYẾT ẤN CỦA SÓI NGUYỀN (Phần 13)
+    # BƯỚC 4: THỰC THI KHAI TỬ TRÊN DATABASE VÀO BAN SÁNG
     # --------------------------------------------------
-    cursed_target = wolf_curse_cache.get(room_id)
-    if cursed_target and cursed_target in room_data["alive"] and cursed_target not in dead_this_night:
-        # Kiểm tra nếu mục tiêu là Dân làng thường mới có tác dụng biến đổi
-        if room_data["roles"][cursed_target]["role"] == "Dân":
-            room_data["roles"][cursed_target]["role"] = "Sói"
-            room_data["roles"][cursed_target]["team"] = "Ma Sói"
-            room_data["history_log"].append(f"🩸 {user_db[cursed_target]['name']} đã dính nguyền và âm thầm mọc nanh vuốt hóa Sói.")
-            # Gửi tin nhắn mật đánh thức thông báo cho người bị biến đổi
-            try:
-                bot.send_message(cursed_target, "🩸 **HẤP THỤ HUYẾT ẤN THÀNH CÔNG** 🩸\n-----------------------------------------\n⚠️ Bạn đã bị Ma Sói Nguyền lây nhiễm dòng máu quỷ. Từ giây phút này, vai trò của bạn đã bị biến đổi thành **Ma Sói**! Hãy phản bội dân làng và đi săn đồng bọn cũ của mình.", parse_mode="Markdown")
-            except Exception: pass
-
-    # --------------------------------------------------
-    # BƯỚC 6: THỰC THI KHAI TỬ & THÔNG BÁO BAN NGÀY
-    # --------------------------------------------------
-    # Cập nhật lại danh sách người chơi còn sống trên hệ thống
     for dead_id in dead_this_night:
         if dead_id in room_data["alive"]:
             room_data["alive"].remove(dead_id)
             room_data["roles"][dead_id]["status"] = "Dead"
             
-    # Dọn dẹp sạch sẽ dữ liệu bộ nhớ đệm Cache đêm nay để chuẩn bị cho đêm sau
+    # LỒNG ĐỒNG BỘ PHẦN 25: Kiểm tra xem Thần tượng của Bán Sói có nằm trong dải chết để hóa Sói không
+    check_and_awaken_wild_child(room_id, dead_this_night)
+
+    # LỒNG ĐỒNG BỘ PHẦN 13: Xử lý bùa nguyền lây nhiễm của Sói Nguyền
+    cursed_target = wolf_curse_cache.get(room_id)
+    if cursed_target and cursed_target in room_data["alive"] and cursed_target not in dead_this_night:
+        if room_data["roles"][cursed_target]["role"] == "Dân":
+            room_data["roles"][cursed_target]["role"] = "Ma Sói Thường"
+            room_data["roles"][cursed_target]["team"] = "Ma Sói"
+            room_data["history_log"].append(f"🧬 Dân làng {user_db[cursed_target]['name']} dính nguyền rủa, hóa Ma Sói đêm nay.")
+            try: bot.send_message(cursed_target, "🩸 **HẤP THỤ HUYẾT ẤN THÀNH CÔNG:** Bạn đã bị nguyền hóa thành Ma Sói! Từ đêm mai hãy đi săn cùng bầy.")
+            except Exception: pass
+
+    # --------------------------------------------------
+    # BƯỚC 5: DỌN DẸP CACHE ĐÊM ĐỂ CHUẨN BỊ CHO CHU KỲ SAU
+    # --------------------------------------------------
     if room_id in wolf_votes_cache: del wolf_votes_cache[room_id]
     if room_id in wolf_curse_cache: del wolf_curse_cache[room_id]
+    if room_id in shadow_ballot_active_cache: del shadow_ballot_active_cache[room_id] # Đồng bộ Phần 38
     for pid in room_data["players"]:
         if "night_action" in room_data["roles"][pid]: del room_data["roles"][pid]["night_action"]
         if "night_action_witch_save" in room_data["roles"][pid]: del room_data["roles"][pid]["night_action_witch_save"]
         if "night_action_witch_kill" in room_data["roles"][pid]: del room_data["roles"][pid]["night_action_witch_kill"]
 
-    # Thay đổi trạng thái vận hành của phòng chơi sang Ban Ngày
+    # Chuyển trạng thái phòng sang Ban Ngày
     room_data["status"] = "Day"
     
-    # Tạo bảng văn bản công bố kết quả buổi sáng đẹp mắt
+    # --------------------------------------------------
+    # BƯỚC 6: BIÊN SOẠN BẢNG PHÁT SÓNG THÔNG BÁO BUỔI SÁNG
+    # --------------------------------------------------
     morning_announcement = (
         f"☀️ **BÌNH MINH HÉ RẠNG TRÊN NGÔI LÀNG** ☀️\n"
         f"-----------------------------------------\n"
-        f"🐓 Tiếng gà gáy vang lên, dân làng thức giấc rủ nhau ra quảng trường trung tâm để kiểm tra quân số...\n\n"
+        f"🐓 Tiếng gà gáy vang lên, dân làng tập trung tại quảng trường kiểm tra quân số...\n\n"
     )
     
     if dead_this_night:
-        morning_announcement += "💀 **HỒI CHUÔNG TỬ THẦN ĐÃ VANG LÊN:**\n"
+        morning_announcement += "💀 **DANH SÁCH HY SINH ĐÊM QUA:**\n"
         for dead_id in dead_this_night:
             pname = user_db[dead_id]["name"]
             prole = room_data["roles"][dead_id]["role"]
-            morning_announcement += f"▪️ **{pname}** đã hy sinh vĩnh viễn (Vai trò gốc: `{prole}`)\n"
+            morning_announcement += f"▪️ **{pname}** đã ngã xuống vĩnh viễn (Vai trò: `{prole}`)\n"
     else:
-        morning_announcement += "🎉 **MỘT ĐÊM BÌNH YÊN KỲ TÍCH!**\nKhông có ai phải nằm xuống trong đêm vừa qua.\n"
+        morning_announcement += "🎉 **KỲ TÍCH ĐÊM BÌNH YÊN!** Không có ai phải nằm xuống trong đêm vừa qua.\n"
         
     morning_announcement += (
         f"-----------------------------------------\n"
         f"📊 **Quân số hiện tại:** Còn `{len(room_data['alive'])}` người sống sót.\n"
-        f"💬 *Cổng chat tổng đã được mở. Toàn bộ làng hãy bắt đầu thảo luận, truy tìm manh mối để vạch mặt kẻ ác!*"
+        f"💬 *Cổng chat tổng đã mở. Hãy thảo luận để tìm ra Ma Sói!*"
     )
     
-    # Gửi thông báo sáng cho toàn bộ thành viên trong phòng
     for pid in room_data["players"]:
-        try:
-            bot.send_message(pid, morning_announcement, parse_mode="Markdown")
+        try: bot.send_message(pid, morning_announcement, parse_mode="Markdown")
         except Exception: pass
 
-    # Kiểm tra điều kiện thắng/thua ngay lập tức (Nếu phe nào đạt mục tiêu, game kết thúc luôn)
+    # Kiểm tra điều kiện kết thúc game ngay lập tức (Nếu thỏa mãn phe nào thắng, ngắt luồng luôn)
     if check_game_over_conditions(room_id):
         return
 
-    # Kích hoạt luồng đếm ngược quản lý thời gian thảo luận Ban Ngày (Sẽ xây dựng ở Phần 16)
+    # Kích hoạt luồng đếm ngược thời gian thảo luận Ban Ngày (Phần 16)
     start_day_discussion_phase(room_id)
 
 # ==========================================
