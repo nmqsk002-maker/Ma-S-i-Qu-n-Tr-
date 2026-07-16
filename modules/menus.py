@@ -32,10 +32,10 @@ def back_to_main_keyboard():
     markup.add(btn_back)
     return markup
 
-def get_action_keyboard(game, action_type, exclude_id=None):
+def get_action_keyboard(game, action_type, exclude_id=None, is_wolf_action=False):
     """
     Tạo danh sách nút bấm hiển thị tự động tên những người chơi còn sống.
-    Dùng cho các hành động bỏ phiếu ban ngày hoặc dùng chức năng ban đêm.
+    Bổ sung tham số is_wolf_action để chặn Sói cắn Sói.
     """
     markup = types.InlineKeyboardMarkup(row_width=2)
     buttons = []
@@ -44,21 +44,23 @@ def get_action_keyboard(game, action_type, exclude_id=None):
         # Bỏ qua những người đã chết
         if not p_info["alive"]:
             continue
-        # Bỏ qua mục tiêu bị loại trừ (ví dụ: thợ săn tự bắn mình, hoặc bảo vệ tự bảo vệ mình)
+        # Bỏ qua mục tiêu bị loại trừ cụ thể (ví dụ: thợ săn tự bắn mình, hoặc bảo vệ tự cứu)
         if exclude_id and p_id == exclude_id:
+            continue
+        # NẾU LÀ HÀNH ĐỘNG CỦA SÓI: Bỏ qua tất cả những người thuộc phe Sói
+        if is_wolf_action and p_info["role"] in ["Ma Sói", "Sói Nhỏ", "Sói Trắng"]:
             continue
             
         btn_text = p_info["name"]
-        # Nếu là Cảnh sát trưởng thì thêm biểu tượng vương miện
         if p_info.get("is_mayor", False):
             btn_text = f"👑 {btn_text}"
             
         btn = types.InlineKeyboardButton(btn_text, callback_data=f"game:{action_type}:{p_id}")
         buttons.append(btn)
         
-    # Sắp xếp các nút bấm hiển thị thành lưới gọn gàng
     markup.add(*buttons)
     return markup
+
 
 def witch_night_keyboard(target_name):
     """Menu đặc biệt dành riêng cho Phù Thủy khi đêm xuống"""
