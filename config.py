@@ -2,7 +2,7 @@
 import os
 
 # Thay Token Bot của bạn vào đây
-BOT_TOKEN = "TOKEN_CỦA_BẠN"
+BOT_TOKEN = "8134069277:AAEr4g3ZBoB0-2R3NUZMYvRHknXqKwEs0wE"
 
 # Cấu hình thời gian các Phase (giây) - Thiết lập ngắn để test, có thể tăng lên khi chơi thật
 TIME_LOBBY_COUNTDOWN = 30
