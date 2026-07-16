@@ -42,6 +42,67 @@ def cmd_start(message):
         )
         bot.send_message(chat_id, welcome_group, reply_markup=lobby_menu_keyboard(), parse_mode="Markdown")
 
+# =====================================================================
+# BỘ LỌC KIỂM SOÁT QUYỀN CHAT TRONG NHÓM (ANTI-GUEST & PHASE CONTROL)
+# =====================================================================
+@bot.message_handler(func=lambda message: message.chat.type != "private", content_types=['text'])
+def filter_group_messages(message):
+    """
+    Tự động kiểm tra và xóa tin nhắn của:
+    1. Người chưa tham gia game (Người lạ/Khách xem).
+    2. Người chơi tham gia nhưng chat sai phase (ví dụ: chat vào ban đêm).
+    """
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    display_name = message.from_user.first_name
+    
+    # Lấy thông tin phòng game hiện tại
+    game = get_game(chat_id)
+    
+    # Nếu game chưa bắt đầu (đang ở phòng chờ), ai cũng có thể chat tự do
+    if not game.is_active:
+        return
+
+    # LỆNH ĐẶC BIỆT: Bỏ qua không chặn lệnh hệ thống (ví dụ lệnh /vote ban ngày)
+    if message.text.startswith('/'):
+        return
+
+    # LỖI 1: Người nhắn tin không có tên trong danh sách tham gia game
+    if user_id not in game.players:
+        try:
+            bot.delete_message(chat_id, message.message_id)
+            # Gửi cảnh báo nhanh và tự xóa sau vài giây (tránh làm rác group)
+            warn_msg = bot.send_message(chat_id, f"⚠️ *{display_name}*, bạn không tham gia trận đấu này! Vui lòng không nhắn tin cắt ngang cuộc chơi.", parse_mode="Markdown")
+            threading.Thread(target=lambda: (time.sleep(3), bot.delete_message(chat_id, warn_msg.message_id))).start()
+        except:
+            pass
+        return
+
+    # LỖI 2: Người chơi đã tham gia nhưng đã bị CHẾT (Linh hồn không được phím chat)
+    if not game.players[user_id]["alive"]:
+        try:
+            bot.delete_message(chat_id, message.message_id)
+            warn_msg = bot.send_message(chat_id, f"💀 *{display_name}*, bạn đã chết! Linh hồn không thể nói chuyện với người sống.", parse_mode="Markdown")
+            threading.Thread(target=lambda: (time.sleep(3), bot.delete_message(chat_id, warn_msg.message_id))).start()
+        except:
+            pass
+        return
+
+    # LỖI 3: Có tham gia, còn sống, nhưng CHAT SAI THỜI GIAN (Chỉ cho phép chat ở phase thảo luận)
+    # Phase thảo luận ban ngày của chúng ta là: "day_discuss"
+    if game.phase != "day_discuss":
+        try:
+            bot.delete_message(chat_id, message.message_id)
+            # Chỉ cảnh báo nếu đang ở phase ban đêm u ám
+            if game.phase == "night":
+                warn_msg = bot.send_message(chat_id, f"🤫 *{display_name}*, trời đang tối! Mọi người đang ngủ, không được làm ồn.", parse_mode="Markdown")
+                threading.Thread(target=lambda: (time.sleep(3), bot.delete_message(chat_id, warn_msg.message_id))).start()
+        except:
+            pass
+        return
+
+    # Nếu vượt qua hết tất cả các điều kiện trên -> Tin nhắn hợp lệ, cho phép hiển thị bình thường trong nhóm!
+
 @bot.message_handler(commands=['vote'])
 def cmd_vote(message):
     """Lệnh gọi danh sách bỏ phiếu treo cổ nhanh vào ban ngày ở nhóm chung"""
