@@ -4,7 +4,7 @@ import time
 from telebot import TeleBot
 from config import BOT_TOKEN, TIME_LOBBY_COUNTDOWN, TIME_NIGHT, TIME_DISCUSSION
 from modules.database import init_db, register_player, get_profile, get_leaderboard
-from modules.game_engine import get_game, game_manager
+from modules.game_engine import get_game, games_manager
 from modules.menus import main_menu_keyboard, lobby_menu_keyboard, back_to_main_keyboard, get_action_keyboard, witch_night_keyboard
 from modules.night_logic import start_night_phase, handle_seer_logic
 from modules.day_logic import start_day_phase, process_voting_results, execute_hanging
